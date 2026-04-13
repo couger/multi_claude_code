@@ -15,6 +15,8 @@ export interface ElectronAPI {
   minimizeWindow: () => void;
   maximizeWindow: () => void;
   closeWindow: () => void;
+  maximizeForSession: () => void;
+  unmaximizeForSession: () => void;
   toggleAutoHideWindow: () => void;
   hideWindowToEdge: () => void;
   restoreWindow: () => void;

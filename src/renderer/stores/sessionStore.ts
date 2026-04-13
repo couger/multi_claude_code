@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { SessionStatus, AlertType } from '../constants';
+import { SessionStatus, AlertType, DisplayMode } from '../constants';
 
 export interface Session {
   id: string;
@@ -10,6 +10,7 @@ export interface Session {
   createdAt: Date;
   lastActivity: Date;
   pid?: number;
+  args?: string;
 }
 
 export interface Alert {
@@ -26,8 +27,6 @@ export interface OutputChunk {
   data: string;
   timestamp: number;
 }
-
-export type DisplayMode = 'thumbnail' | 'icon';
 
 interface SessionStore {
   // 状态
@@ -57,7 +56,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   // 初始状态
   sessions: [],
   expandedSessionId: null,
-  displayMode: 'thumbnail',
+  displayMode: DisplayMode.THUMBNAIL,
   sidebarVisible: true,
   alerts: [],
   outputBuffers: new Map(),

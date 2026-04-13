@@ -315,10 +315,9 @@ const RemoteAccessPanel: React.FC<RemoteAccessPanelProps> = ({ visible, onClose 
                         <span className="text-dark-500">http://</span>
                         <span className="text-dark-200 font-mono">{ip}</span>
                         <span className="text-dark-500">:{status.port}</span>
-                        <span className="text-dark-600 ml-1">?token={status.token.slice(0, 8)}...</span>
                         <button
                           onClick={async () => {
-                            const url = `http://${ip}:${status.port}/?token=${encodeURIComponent(status.token)}`;
+                            const url = `http://${ip}:${status.port}/`;
                             try { await navigator.clipboard.writeText(url); } catch { /* ignore */ }
                           }}
                           className="ml-auto text-dark-400 hover:text-accent-primary transition-colors"

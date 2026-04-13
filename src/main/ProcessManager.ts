@@ -35,7 +35,13 @@ class ProcessManager {
     const workDir = options.workDir || os.homedir();
     const name = options.name || `CLI #${this.sessions.size + 1}`;
     const command = options.command || DEFAULT_CONFIG.claudeCommand;
+    const argsString = options.args || '';
     const outputFile = path.join(this.outputDir, `${id}.log`);
+
+    // 解析启动参数字符串为数组（处理带引号的参数）
+    const parsedArgs: string[] = argsString
+      ? argsString.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((a: string) => a.replace(/^"|"$/g, '')) || []
+      : [];
 
     // 创建输出文件
     fs.writeFileSync(outputFile, '');
@@ -50,11 +56,12 @@ class ProcessManager {
       lastActivity: new Date(),
       outputFile,
       outputBuffer: [],
+      args: argsString || undefined,
     };
 
     try {
       // 使用 node-pty 创建伪终端
-      const ptyProcess = pty.spawn(command, [], {
+      const ptyProcess = pty.spawn(command, parsedArgs, {
         name: 'xterm-256color',
         cols: 120,
         rows: 30,
@@ -226,8 +233,12 @@ class ProcessManager {
    */
   resizeSession(id: string, cols: number, rows: number) {
     const session = this.sessions.get(id);
-    if (session?.pty) {
-      session.pty.resize(cols, rows);
+    if (session?.pty && session.status === SessionStatus.RUNNING) {
+      try {
+        session.pty.resize(cols, rows);
+      } catch {
+        // pty 可能已退出，忽略 resize 错误
+      }
     }
   }
 
@@ -358,6 +369,7 @@ class ProcessManager {
       lastActivity: session.lastActivity,
       outputFile: session.outputFile,
       pid: session.pid,
+      args: session.args,
     };
   }
 

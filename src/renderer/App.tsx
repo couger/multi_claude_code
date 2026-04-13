@@ -4,16 +4,16 @@ import Sidebar from './components/Sidebar';
 import ExpandedView from './components/ExpandedView';
 import TitleBar from './components/TitleBar';
 import AlertManager from './components/AlertManager';
-import PerformancePanel from './components/PerformancePanel';
-import GroupPanel from './components/GroupPanel';
-import RemoteAccessPanel from './components/RemoteAccessPanel';
 import CreateSessionDialog from './components/CreateSessionDialog';
+import SettingsPanel from './components/SettingsPanel';
+import { SessionStatus } from './constants';
 
 const App: React.FC = () => {
   const {
     sessions,
     expandedSessionId,
     sidebarVisible,
+    displayMode,
     setSessions,
     addSession,
     updateSession,
@@ -21,12 +21,11 @@ const App: React.FC = () => {
     setExpandedSession,
     appendOutput,
     addAlert,
+    setDisplayMode,
   } = useSessionStore();
 
-  const [showPerformance, setShowPerformance] = useState(false);
-  const [showGroups, setShowGroups] = useState(false);
-  const [showRemoteAccess, setShowRemoteAccess] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   // 初始化 IPC 监听
   useEffect(() => {
@@ -87,7 +86,7 @@ const App: React.FC = () => {
     : null;
 
   // 处理创建新会话（带选项）
-  const handleCreateSessionWithOptions = useCallback(async (options: { name?: string; workDir?: string }) => {
+  const handleCreateSessionWithOptions = useCallback(async (options: { name?: string; workDir?: string; args?: string }) => {
     try {
       await window.electronAPI.createSession(options);
     } catch (error) {
@@ -95,8 +94,12 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // 处理关闭会话
+  // 处理关闭会话（带确认）
   const handleCloseSession = useCallback(async (sessionId: string) => {
+    const session = useSessionStore.getState().sessions.find(s => s.id === sessionId);
+    if (session && session.status === SessionStatus.RUNNING) {
+      if (!confirm(`确定终止会话 "${session.name}" 吗？正在运行的任务将被中断。`)) return;
+    }
     try {
       await window.electronAPI.killSession(sessionId);
     } catch (error) {
@@ -104,14 +107,16 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // 处理展开会话
+  // 处理展开会话（自动最大化窗口）
   const handleExpandSession = useCallback((sessionId: string) => {
     setExpandedSession(sessionId);
+    try { window.electronAPI.maximizeForSession(); } catch { /* ignore */ }
   }, [setExpandedSession]);
 
-  // 处理折叠会话
+  // 处理折叠会话（恢复窗口大小）
   const handleCollapseSession = useCallback(() => {
     setExpandedSession(null);
+    try { window.electronAPI.unmaximizeForSession(); } catch { /* ignore */ }
   }, [setExpandedSession]);
 
   // 获取会话的未确认告警数
@@ -137,13 +142,12 @@ const App: React.FC = () => {
           visible={sidebarVisible}
           sessions={sessions}
           expandedSessionId={expandedSessionId}
+          displayMode={displayMode}
           onCreateSession={() => setShowCreateDialog(true)}
           onCloseSession={handleCloseSession}
           onExpandSession={handleExpandSession}
           getAlertCount={getSessionAlertCount}
-          onShowPerformance={() => setShowPerformance(true)}
-          onShowGroups={() => setShowGroups(true)}
-          onShowRemoteAccess={() => setShowRemoteAccess(true)}
+          onShowSettings={() => setShowSettings(true)}
         />
 
         {/* 展开视图 */}
@@ -182,33 +186,21 @@ const App: React.FC = () => {
       {/* 告警管理器 */}
       <AlertManager />
 
-      {/* 性能监控面板 */}
-      <PerformancePanel
-        visible={showPerformance}
-        onClose={() => setShowPerformance(false)}
+      {/* 创建会话对话框 */}
+      <CreateSessionDialog
+        visible={showCreateDialog}
+        onClose={() => setShowCreateDialog(false)}
+        onCreate={handleCreateSessionWithOptions}
       />
 
-      {/* 分组管理面板 */}
-      <GroupPanel
-        visible={showGroups}
-        onClose={() => setShowGroups(false)}
+      {/* 设置面板 */}
+      <SettingsPanel
+        visible={showSettings}
+        onClose={() => setShowSettings(false)}
         sessions={sessions}
+        displayMode={displayMode}
+        onDisplayModeChange={setDisplayMode}
       />
-
-      {/* 远程访问控制面板（仅 Electron 端显示） */}
-      {window.electronAPI?.isElectron && (
-        <RemoteAccessPanel
-          visible={showRemoteAccess}
-          onClose={() => setShowRemoteAccess(false)}
-        />
-      )}
-
-    {/* 创建会话对话框 */}
-    <CreateSessionDialog
-      visible={showCreateDialog}
-      onClose={() => setShowCreateDialog(false)}
-      onCreate={handleCreateSessionWithOptions}
-    />
   </div>
   );
 };

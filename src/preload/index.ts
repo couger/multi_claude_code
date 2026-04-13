@@ -14,6 +14,8 @@ const IPC_CHANNELS = {
   SELECT_WORKDIR: 'dialog:selectWorkdir',
   SET_NOTE: 'session:note',
   RESIZE_SESSION: 'session:resize',
+  WINDOW_MAXIMIZE: 'window:maximizeForSession',
+  WINDOW_UNMAXIMIZE: 'window:unmaximizeForSession',
 
   // 主进程 -> 渲染进程
   SESSION_CREATED: 'session:created',
@@ -41,6 +43,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
+  maximizeForSession: () => ipcRenderer.send(IPC_CHANNELS.WINDOW_MAXIMIZE),
+  unmaximizeForSession: () => ipcRenderer.send(IPC_CHANNELS.WINDOW_UNMAXIMIZE),
   toggleAutoHideWindow: () => ipcRenderer.send('window:toggle-auto-hide'),
   hideWindowToEdge: () => ipcRenderer.send('window:hide-to-edge'),
   restoreWindow: () => ipcRenderer.send('window:restore-window'),

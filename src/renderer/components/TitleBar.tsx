@@ -30,16 +30,6 @@ const TitleBar: React.FC = () => {
       {/* 右侧窗口控制按钮 - 仅 Electron 环境显示 */}
       {isElectron && (
         <div className="flex items-center gap-1 no-drag">
-          {/* 贴边隐藏切换按钮 */}
-          <button
-            onClick={() => window.electronAPI.toggleAutoHideWindow()}
-            className="w-6 h-6 flex items-center justify-center hover:bg-dark-600 rounded transition-colors"
-            title="切换自动贴边隐藏"
-          >
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7M5 9l7 7 7-7" />
-            </svg>
-          </button>
           {/* 一键贴边隐藏按钮 */}
           <button
             onClick={() => window.electronAPI.hideWindowToEdge()}

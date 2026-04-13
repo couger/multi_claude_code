@@ -152,8 +152,15 @@ const SessionCard: React.FC<SessionCardProps> = ({
 
       {/* 底部信息 */}
       <div className="flex items-center justify-between mt-2 text-xs text-dark-500">
-        <span className="truncate max-w-[100px]">{session.workDir.split('/').pop() || session.workDir}</span>
-        <span>
+        <div className="flex items-center gap-1.5 truncate max-w-[180px]">
+          <span className="truncate">{session.workDir.split('/').pop() || session.workDir}</span>
+          {session.args && (
+            <span className="shrink-0 px-1 py-0.5 bg-accent-primary/15 text-accent-primary rounded text-[10px] font-mono truncate max-w-[100px]" title={session.args}>
+              {session.args.split(' ')[0]}
+            </span>
+          )}
+        </div>
+        <span className="shrink-0">
           {session.status === SessionStatus.RUNNING
             ? '运行中'
             : session.status === SessionStatus.COMPLETED

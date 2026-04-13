@@ -4,7 +4,7 @@
 
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
-import { IPC_CHANNELS } from './constants';
+import { IPC_CHANNELS, SessionStatus } from './constants';
 import { ProcessManager } from './ProcessManager';
 import { PerformanceMonitor } from './PerformanceMonitor';
 import { GroupManager } from './GroupManager';
@@ -29,7 +29,7 @@ let wss: any = null;
 let httpPort = 8888;
 let httpAccessToken = '';
 let allowedIPs = new Set<string>();
-let httpServerEnabled = true; // Web 访问开关
+let httpServerEnabled = false; // Web 访问开关（默认关闭）
 
 // WebSocket 客户端追踪
 interface WsClientInfo {
@@ -429,6 +429,27 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // 主窗口关闭前确认（有运行中会话时弹出确认框）
+  mainWindow.on('close', (e: any) => {
+    if (!processManager) return;
+    const runningCount = Array.from((processManager as any).sessions.values())
+      .filter((s: any) => s.status === SessionStatus.RUNNING).length;
+    if (runningCount > 0) {
+      const choice = dialog.showMessageBoxSync(mainWindow!, {
+        type: 'question',
+        title: '确认退出',
+        message: `当前有 ${runningCount} 个会话正在运行。`,
+        detail: '关闭窗口将终止所有运行中的会话，确定退出吗？',
+        buttons: ['取消', '退出'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (choice === 0) {
+        e.preventDefault();
+      }
+    }
+  });
 }
 
 function initIPC() {
@@ -731,6 +752,20 @@ function initIPC() {
     }
   });
   ipcMain.on('window:close', () => mainWindow?.close());
+
+  // 展开会话时最大化窗口
+  ipcMain.on(IPC_CHANNELS.WINDOW_MAXIMIZE, () => {
+    if (mainWindow && !mainWindow.isMaximized()) {
+      mainWindow.maximize();
+    }
+  });
+
+  // 收起会话时恢复窗口
+  ipcMain.on(IPC_CHANNELS.WINDOW_UNMAXIMIZE, () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize();
+    }
+  });
 
   // 窗口贴边隐藏切换
   ipcMain.on('window:toggle-auto-hide', () => {
