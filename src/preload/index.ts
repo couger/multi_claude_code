@@ -97,3 +97,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   kickClient: (clientId: string) => ipcRenderer.invoke('remote:kickClient', clientId),
   kickAllClients: () => ipcRenderer.invoke('remote:kickAll'),
 });
+
+// 鼠标进入/离开窗口事件 — 通过 DOM 事件检测并通知主进程
+document.addEventListener('mouseenter', () => {
+  ipcRenderer.send('window:mouse-enter');
+});
+document.addEventListener('mouseleave', () => {
+  ipcRenderer.send('window:mouse-leave');
+});
