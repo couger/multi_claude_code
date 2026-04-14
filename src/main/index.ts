@@ -240,6 +240,11 @@ function setupWindowAutoHide() {
       setTimeout(checkWindowPosition, checkInterval);
       return;
     }
+    if (mainWindow.isMinimized()) {
+      // 窗口最小化时跳过贴边检测
+      setTimeout(checkWindowPosition, checkInterval);
+      return;
+    }
     if (isManuallyHidden || isWindowHidden || isWindowRestored) {
       // 窗口隐藏期间或已滑出状态下保持轮询，不重复触发贴边检测
       setTimeout(checkWindowPosition, checkInterval);
@@ -283,7 +288,7 @@ function setupWindowAutoHide() {
 
   // 监听鼠标位置，控制窗口的展开/收起
   const checkMousePosition = () => {
-    if (!mainWindow) return;
+    if (!mainWindow || mainWindow.isMinimized()) return;
 
     const cursor = require('electron').screen.getCursorScreenPoint();
     const display = require('electron').screen.getDisplayNearestPoint(cursor);
