@@ -285,7 +285,7 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
       {/* 底部状态栏 */}
       <div className="h-8 bg-dark-800 border-t border-dark-700 flex items-center justify-between px-4 text-xs text-dark-500">
         <div className="flex items-center gap-4">
-          <span>📁 {session.workDir}</span>
+          <span title={session.workDir}>📁 {session.workDir.split('/').pop() || session.workDir}</span>
           <span>PID: {session.pid || 'N/A'}</span>
         </div>
         <div className="flex items-center gap-4">

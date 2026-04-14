@@ -12,6 +12,7 @@ interface SidebarProps {
   sessions: Session[];
   expandedSessionId: string | null;
   displayMode: DisplayMode;
+  onDisplayModeChange: (mode: DisplayMode) => void;
   onCreateSession: () => void;
   onCloseSession: (id: string) => void;
   onExpandSession: (id: string) => void;
@@ -24,6 +25,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   sessions,
   expandedSessionId,
   displayMode,
+  onDisplayModeChange,
   onCreateSession,
   onCloseSession,
   onExpandSession,
@@ -151,6 +153,29 @@ const Sidebar: React.FC<SidebarProps> = ({
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-medium text-dark-200">CLI 会话</h2>
               <div className="flex items-center gap-1">
+                <button
+                  onClick={() => onDisplayModeChange(
+                    displayMode === DisplayMode.THUMBNAIL
+                      ? DisplayMode.ICON
+                      : DisplayMode.THUMBNAIL
+                  )}
+                  className={`p-1 rounded transition-colors ${
+                    displayMode === DisplayMode.ICON
+                      ? 'bg-accent-primary text-dark-900'
+                      : 'bg-dark-700 text-dark-400 hover:bg-dark-600'
+                  }`}
+                  title={displayMode === DisplayMode.ICON ? '切换到缩略图模式' : '切换到图标模式'}
+                >
+                  {displayMode === DisplayMode.ICON ? (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                    </svg>
+                  )}
+                </button>
                 <span className="text-xs text-dark-500 bg-dark-700 px-2 py-0.5 rounded-full">
                   {sessions.length}
                 </span>

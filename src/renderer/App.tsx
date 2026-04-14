@@ -143,6 +143,7 @@ const App: React.FC = () => {
           sessions={sessions}
           expandedSessionId={expandedSessionId}
           displayMode={displayMode}
+          onDisplayModeChange={setDisplayMode}
           onCreateSession={() => setShowCreateDialog(true)}
           onCloseSession={handleCloseSession}
           onExpandSession={handleExpandSession}

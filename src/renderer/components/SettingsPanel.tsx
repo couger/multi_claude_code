@@ -3,13 +3,13 @@
  * 整合通用/分组/远程/性能四个标签页
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Session } from '../stores/sessionStore';
 import { DisplayMode } from '../constants';
 
 // ======================== 类型定义 ========================
 
-type TabKey = 'general' | 'groups' | 'performance';
+type TabKey = 'general' | 'groups' | 'performance' | 'remote';
 
 interface SettingsPanelProps {
   visible: boolean;
@@ -445,7 +445,8 @@ interface RemoteStatus {
   clients: Array<{ id: string; ip: string; connectedAt: string }>;
 }
 
-const RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
+// @ts-ignore
+const _RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
   const [status, setStatus] = useState<RemoteStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [portInput, setPortInput] = useState('');
@@ -691,6 +692,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     if (visible) setActiveTab('general');
   }, [visible]);
 
+  // 动态标签页：只在 Electron 环境中显示远程标签页
+  const dynamicTabs = useMemo(() => {
+    const tabs: { key: TabKey; label: string; icon: string }[] = [...TABS];
+    // 检查是否是本地 Electron 环境
+    if (window.electronAPI) {
+      tabs.push({ key: 'remote' as TabKey, label: '网络', icon: '🌐' });
+    }
+    return tabs;
+  }, []);
+
   if (!visible) return null;
 
   return (
@@ -711,7 +722,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
         {/* 标签页 */}
         <div className="flex border-b border-dark-700 shrink-0">
-          {TABS.map(tab => (
+          {dynamicTabs.map(tab => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
@@ -736,6 +747,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           )}
           {activeTab === 'performance' && (
             <PerformanceTab visible={visible && activeTab === 'performance'} />
+          )}
+          {activeTab === 'remote' && window.electronAPI && (
+            <_RemoteTab visible={visible && activeTab === 'remote'} />
           )}
         </div>
       </div>

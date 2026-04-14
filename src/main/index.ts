@@ -2,7 +2,7 @@
  * Claude Code CLI Manager - 主进程入口 (单文件打包版本)
  */
 
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, screen } from 'electron';
 import path from 'path';
 import { IPC_CHANNELS, SessionStatus } from './constants';
 import { ProcessManager } from './ProcessManager';
@@ -758,17 +758,57 @@ function initIPC() {
   });
   ipcMain.on('window:close', () => mainWindow?.close());
 
-  // 展开会话时最大化窗口
+  // 展开会话时调整窗口大小（避免全屏）
   ipcMain.on(IPC_CHANNELS.WINDOW_MAXIMIZE, () => {
-    if (mainWindow && !mainWindow.isMaximized()) {
-      mainWindow.maximize();
+    if (!mainWindow) return;
+    
+    // 如果窗口已最大化，先取消最大化
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
     }
+    
+    // 获取当前屏幕尺寸
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+    
+    // 计算新尺寸：屏幕的 80% 或固定值 1400x900，取较小值
+    const targetWidth = Math.min(1400, Math.floor(screenWidth * 0.8));
+    const targetHeight = Math.min(900, Math.floor(screenHeight * 0.8));
+    
+    // 计算居中位置
+    const x = Math.floor((screenWidth - targetWidth) / 2);
+    const y = Math.floor((screenHeight - targetHeight) / 2);
+    
+    // 保存原始尺寸（如果尚未保存）
+    if (!mainWindow.originalBounds) {
+      mainWindow.originalBounds = mainWindow.getBounds();
+    }
+    
+    // 设置新尺寸
+    mainWindow.setBounds({ x, y, width: targetWidth, height: targetHeight });
   });
 
-  // 收起会话时恢复窗口
+  // 收起会话时恢复原始窗口大小
   ipcMain.on(IPC_CHANNELS.WINDOW_UNMAXIMIZE, () => {
-    if (mainWindow?.isMaximized()) {
+    if (!mainWindow) return;
+    
+    // 如果窗口已最大化，先取消最大化
+    if (mainWindow.isMaximized()) {
       mainWindow.unmaximize();
+    }
+    
+    // 恢复原始尺寸
+    if (mainWindow.originalBounds) {
+      mainWindow.setBounds(mainWindow.originalBounds);
+    } else {
+      // 默认恢复为 1200x800
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+      const targetWidth = 1200;
+      const targetHeight = 800;
+      const x = Math.floor((screenWidth - targetWidth) / 2);
+      const y = Math.floor((screenHeight - targetHeight) / 2);
+      mainWindow.setBounds({ x, y, width: targetWidth, height: targetHeight });
     }
   });
 

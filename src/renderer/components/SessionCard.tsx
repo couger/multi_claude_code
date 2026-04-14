@@ -3,35 +3,6 @@ import { Session } from '../stores/sessionStore';
 import { SessionStatus, DisplayMode } from '../constants';
 import { useSessionStore } from '../stores/sessionStore';
 
-// 移除 ANSI 转义序列的函数
-const stripAnsi = (str: string): string => {
-  // 更全面的 ANSI 转义码正则表达式
-  // eslint-disable-next-line no-control-regex
-  const ansiRegex = /[\x1b\x9b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\[?\?[0-9;]*[a-zA-Z]|\[?>[0-9;]*[a-zA-Z]|\[?[\d;]*[a-zA-Z]|\[>[\d;]*[a-zA-Z]/g;
-  return str.replace(ansiRegex, '');
-};
-
-// 移除控制字符
-const stripControlChars = (str: string): string => {
-  // eslint-disable-next-line no-control-regex
-  return str.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
-};
-
-// 清理输出内容用于预览
-const cleanOutput = (output: string[]): string => {
-  const cleaned = output
-    .map(chunk => stripControlChars(stripAnsi(chunk)))
-    .join('')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .split('\n')
-    .map(line => line.trimEnd())
-    .filter(line => line.trim().length > 0)
-    .slice(-6)
-    .join('\n');
-  return cleaned;
-};
-
 interface SessionCardProps {
   session: Session;
   displayMode: DisplayMode;
@@ -49,9 +20,7 @@ const SessionCard: React.FC<SessionCardProps> = ({
   onClose,
   onExpand,
 }) => {
-  const outputBuffers = useSessionStore((state) => state.outputBuffers);
   const alerts = useSessionStore((state) => state.alerts);
-  const output = outputBuffers.get(session.id) || [];
 
   // 获取会话的最新告警
   const latestAlert = alerts
@@ -140,13 +109,10 @@ const SessionCard: React.FC<SessionCardProps> = ({
         </button>
       </div>
 
-      {/* 缩略图预览 */}
-      <div className="bg-dark-900 rounded p-2 h-24 overflow-hidden terminal-container text-xs">
-        <div className="text-dark-300 font-mono whitespace-pre-wrap break-all">
-          {cleanOutput(output)}
-          {session.status === SessionStatus.RUNNING && (
-            <span className="inline-block w-1.5 h-3 bg-accent-primary ml-0.5 animate-pulse" />
-          )}
+      {/* 备注预览 */}
+      <div className="bg-dark-900 rounded p-2 h-24 overflow-hidden text-sm">
+        <div className="text-dark-200 whitespace-pre-wrap break-all h-full flex items-center justify-center">
+          {session.note || session.workDir.split('/').pop() || session.workDir}
         </div>
       </div>
 
