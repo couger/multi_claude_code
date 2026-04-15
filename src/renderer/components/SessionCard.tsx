@@ -1,7 +1,32 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Session } from '../stores/sessionStore';
 import { SessionStatus, DisplayMode } from '../constants';
 import { useSessionStore } from '../stores/sessionStore';
+
+// 常用参数预设颜色
+const PRESET_ARGS_COLORS: Record<string, string> = {
+  '--dangerously-skip-permissions': '#f85149', // 红色
+  '--no-confirm': '#58a6ff', // 蓝色
+  '--allow-all': '#f85149', // 红色
+  '--skip-approval': '#58a6ff', // 蓝色
+};
+
+// 预设参数列表（用于快速识别）
+const PRESET_ARGS = Object.keys(PRESET_ARGS_COLORS);
+
+// 根据参数字符串生成稳定的颜色
+const generateArgColor = (arg: string): string => {
+  if (PRESET_ARGS_COLORS[arg]) {
+    return PRESET_ARGS_COLORS[arg];
+  }
+  // 为其他参数生成随机但稳定的颜色
+  let hash = 0;
+  for (let i = 0; i < arg.length; i++) {
+    hash = arg.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const colors = ['#3fb950', '#d29922', '#bc8cff', '#f0883e', '#f778ba', '#39d2c0', '#a371f7', '#79c0ff'];
+  return colors[Math.abs(hash) % colors.length];
+};
 
 interface SessionCardProps {
   session: Session;
@@ -120,10 +145,21 @@ const SessionCard: React.FC<SessionCardProps> = ({
       <div className="flex items-center justify-between mt-2 text-xs text-dark-500">
         <div className="flex items-center gap-1.5 truncate max-w-[180px]">
           <span className="truncate">{session.workDir.split('/').pop() || session.workDir}</span>
+          {/* 参数色块显示 */}
           {session.args && (
-            <span className="shrink-0 px-1 py-0.5 bg-accent-primary/15 text-accent-primary rounded text-[10px] font-mono truncate max-w-[100px]" title={session.args}>
-              {session.args.split(' ')[0]}
-            </span>
+            <div className="flex items-center gap-1 shrink-0">
+              {session.args.split(' ').filter(Boolean).map((arg, idx) => {
+                const color = generateArgColor(arg);
+                return (
+                  <span
+                    key={idx}
+                    className="w-3 h-3 rounded-sm shrink-0 cursor-help"
+                    style={{ backgroundColor: color }}
+                    title={arg}
+                  />
+                );
+              })}
+            </div>
           )}
         </div>
         <span className="shrink-0">

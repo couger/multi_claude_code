@@ -9,7 +9,18 @@ import { DisplayMode } from '../constants';
 
 // ======================== 类型定义 ========================
 
-type TabKey = 'general' | 'groups' | 'performance' | 'remote';
+type TabKey = 'general' | 'groups' | 'performance' | 'remote' | 'ai';
+
+// AI配置接口
+interface AIConfig {
+  enabled: boolean;
+  provider: 'openai' | 'anthropic' | 'custom';
+  apiKey: string;
+  apiBase: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+}
 
 interface SettingsPanelProps {
   visible: boolean;
@@ -21,39 +32,314 @@ interface SettingsPanelProps {
 
 // ======================== 子组件：通用 ========================
 
+interface GeneralSettings {
+  showGroupPanel: boolean;
+  showPerformancePanel: boolean;
+  showIconToggle: boolean;
+}
+
 const GeneralTab: React.FC<{
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
-}> = ({ displayMode, onDisplayModeChange }) => (
-  <div className="space-y-5">
-    {/* 显示模式 */}
-    <div className="space-y-2">
-      <label className="text-xs text-dark-400">会话显示模式</label>
-      <div className="flex gap-2">
-        <button
-          onClick={() => onDisplayModeChange(DisplayMode.THUMBNAIL)}
-          className={`flex-1 text-xs py-2 rounded transition-colors ${
-            displayMode === DisplayMode.THUMBNAIL
-              ? 'bg-accent-primary text-dark-900'
-              : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
-          }`}
-        >
-          缩略图模式
-        </button>
-        <button
-          onClick={() => onDisplayModeChange(DisplayMode.ICON)}
-          className={`flex-1 text-xs py-2 rounded transition-colors ${
-            displayMode === DisplayMode.ICON
-              ? 'bg-accent-primary text-dark-900'
-              : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
-          }`}
-        >
-          图标模式
-        </button>
+  settings: GeneralSettings;
+  onSettingsChange: (settings: GeneralSettings) => void;
+}> = ({ displayMode, onDisplayModeChange, settings, onSettingsChange }) => {
+  const toggleSetting = (key: keyof GeneralSettings) => {
+    onSettingsChange({ ...settings, [key]: !settings[key] });
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* 主界面功能开关 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">主界面功能</label>
+        <div className="space-y-3">
+          {/* 分组功能开关 */}
+          <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
+            <div className="flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 text-dark-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+              <span className="text-xs text-dark-200">分组</span>
+            </div>
+            <button
+              onClick={() => toggleSetting('showGroupPanel')}
+              className={`relative w-10 h-5 rounded-full transition-colors ${
+                settings.showGroupPanel ? 'bg-accent-primary' : 'bg-dark-600'
+              }`}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                settings.showGroupPanel ? 'left-5' : 'left-0.5'
+              }`} />
+            </button>
+          </div>
+
+          {/* 性能功能开关 */}
+          <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
+            <div className="flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 text-dark-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              <span className="text-xs text-dark-200">性能</span>
+            </div>
+            <button
+              onClick={() => toggleSetting('showPerformancePanel')}
+              className={`relative w-10 h-5 rounded-full transition-colors ${
+                settings.showPerformancePanel ? 'bg-accent-primary' : 'bg-dark-600'
+              }`}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                settings.showPerformancePanel ? 'left-5' : 'left-0.5'
+              }`} />
+            </button>
+          </div>
+
+          {/* 图标切换功能开关 */}
+          <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
+            <div className="flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 text-dark-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+              </svg>
+              <span className="text-xs text-dark-200">图标切换</span>
+            </div>
+            <button
+              onClick={() => toggleSetting('showIconToggle')}
+              className={`relative w-10 h-5 rounded-full transition-colors ${
+                settings.showIconToggle ? 'bg-accent-primary' : 'bg-dark-600'
+              }`}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                settings.showIconToggle ? 'left-5' : 'left-0.5'
+              }`} />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
+
+// ======================== 子组件：助手AI ========================
+
+const AITab: React.FC = () => {
+  const [config, setConfig] = useState<AIConfig>(() => {
+    const saved = localStorage.getItem('aiConfig');
+    return saved ? JSON.parse(saved) : {
+      enabled: false,
+      provider: 'openai' as const,
+      apiKey: '',
+      apiBase: '',
+      model: 'gpt-4o',
+      temperature: 0.7,
+      maxTokens: 4096,
+    };
+  });
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+
+  // 保存配置
+  useEffect(() => {
+    localStorage.setItem('aiConfig', JSON.stringify(config));
+  }, [config]);
+
+  const handleTest = async () => {
+    if (!config.apiKey) {
+      setTestResult('error');
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      // 简单的测试请求
+      const response = await fetch(config.apiBase || 'https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: 'user', content: 'Hello' }],
+          max_tokens: 5,
+        }),
+      });
+      setTestResult(response.ok ? 'success' : 'error');
+    } catch {
+      setTestResult('error');
+    }
+    setTesting(false);
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* 启用开关 */}
+      <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
+        <div>
+          <div className="text-sm text-dark-200 font-medium">启用助手AI</div>
+          <div className="text-xs text-dark-500">允许AI辅助管理会话</div>
+        </div>
+        <button
+          onClick={() => setConfig({ ...config, enabled: !config.enabled })}
+          className={`relative w-10 h-5 rounded-full transition-colors ${
+            config.enabled ? 'bg-accent-primary' : 'bg-dark-600'
+          }`}
+        >
+          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+            config.enabled ? 'left-5' : 'left-0.5'
+          }`} />
+        </button>
+      </div>
+
+      {/* 提供商选择 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">AI提供商</label>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setConfig({ ...config, provider: 'openai' })}
+            className={`flex-1 text-xs py-2 rounded transition-colors ${
+              config.provider === 'openai'
+                ? 'bg-accent-primary text-dark-900'
+                : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
+            }`}
+          >
+            OpenAI
+          </button>
+          <button
+            onClick={() => setConfig({ ...config, provider: 'anthropic' })}
+            className={`flex-1 text-xs py-2 rounded transition-colors ${
+              config.provider === 'anthropic'
+                ? 'bg-accent-primary text-dark-900'
+                : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
+            }`}
+          >
+            Anthropic
+          </button>
+          <button
+            onClick={() => setConfig({ ...config, provider: 'custom' })}
+            className={`flex-1 text-xs py-2 rounded transition-colors ${
+              config.provider === 'custom'
+                ? 'bg-accent-primary text-dark-900'
+                : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
+            }`}
+          >
+            自定义
+          </button>
+        </div>
+      </div>
+
+      {/* API密钥 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">API密钥</label>
+        <div className="flex items-center gap-2">
+          <input
+            type={showApiKey ? 'text' : 'password'}
+            value={config.apiKey}
+            onChange={(e) => setConfig({ ...config, apiKey: e.target.value })}
+            placeholder="sk-..."
+            className="flex-1 px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none font-mono"
+          />
+          <button
+            onClick={() => setShowApiKey(!showApiKey)}
+            className="p-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors"
+            title={showApiKey ? '隐藏' : '显示'}
+          >
+            {showApiKey ? (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* API基础URL（自定义时显示） */}
+      {config.provider === 'custom' && (
+        <div className="space-y-2">
+          <label className="text-xs text-dark-400">API基础URL</label>
+          <input
+            type="text"
+            value={config.apiBase}
+            onChange={(e) => setConfig({ ...config, apiBase: e.target.value })}
+            placeholder="https://api.example.com/v1"
+            className="w-full px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+          />
+        </div>
+      )}
+
+      {/* 模型选择 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">模型</label>
+        <input
+          type="text"
+          value={config.model}
+          onChange={(e) => setConfig({ ...config, model: e.target.value })}
+          placeholder="gpt-4o"
+          className="w-full px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+        />
+      </div>
+
+      {/* 参数设置 */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <label className="text-xs text-dark-400">温度 (0-1)</label>
+          <input
+            type="number"
+            min="0"
+            max="1"
+            step="0.1"
+            value={config.temperature}
+            onChange={(e) => setConfig({ ...config, temperature: parseFloat(e.target.value) || 0.7 })}
+            className="w-full px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 focus:border-accent-primary focus:outline-none"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs text-dark-400">最大Token数</label>
+          <input
+            type="number"
+            min="1"
+            max="128000"
+            value={config.maxTokens}
+            onChange={(e) => setConfig({ ...config, maxTokens: parseInt(e.target.value) || 4096 })}
+            className="w-full px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 focus:border-accent-primary focus:outline-none"
+          />
+        </div>
+      </div>
+
+      {/* 测试连接 */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={handleTest}
+          disabled={testing || !config.apiKey}
+          className="flex-1 py-2 bg-accent-primary text-dark-900 rounded text-sm font-medium hover:bg-accent-primary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {testing ? '测试中...' : '测试连接'}
+        </button>
+        {testResult === 'success' && (
+          <span className="text-xs text-green-400">✓ 连接成功</span>
+        )}
+        {testResult === 'error' && (
+          <span className="text-xs text-red-400">✗ 连接失败</span>
+        )}
+      </div>
+
+      {/* 说明 */}
+      <div className="text-xs text-dark-500 p-2 bg-dark-900 rounded">
+        <p className="mb-1">💡 说明：</p>
+        <ul className="list-disc list-inside space-y-0.5">
+          <li>助手AI将自动监控会话状态并在需要时提供建议</li>
+          <li>API密钥仅存储在本地，不会上传到服务器</li>
+          <li>后续功能将支持AI自动处理会话异常</li>
+        </ul>
+      </div>
+    </div>
+  );
+};
 
 // ======================== 子组件：性能 ========================
 
@@ -676,6 +962,7 @@ const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'general', label: '通用', icon: '⚙' },
   { key: 'groups', label: '分组', icon: '📁' },
   { key: 'performance', label: '性能', icon: '📊' },
+  { key: 'ai', label: '助手AI', icon: '🤖' },
 ];
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -686,6 +973,21 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onDisplayModeChange,
 }) => {
   const [activeTab, setActiveTab] = useState<TabKey>('general');
+
+  // 通用设置状态 - 从 localStorage 读取
+  const [generalSettings, setGeneralSettings] = useState<GeneralSettings>(() => {
+    const saved = localStorage.getItem('generalSettings');
+    return saved ? JSON.parse(saved) : {
+      showGroupPanel: true,
+      showPerformancePanel: true,
+      showIconToggle: true,
+    };
+  });
+
+  // 保存通用设置到 localStorage
+  useEffect(() => {
+    localStorage.setItem('generalSettings', JSON.stringify(generalSettings));
+  }, [generalSettings]);
 
   // 打开时重置到通用标签
   useEffect(() => {
@@ -740,7 +1042,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {/* 内容 */}
         <div className="overflow-y-auto flex-1 p-4">
           {activeTab === 'general' && (
-            <GeneralTab displayMode={displayMode} onDisplayModeChange={onDisplayModeChange} />
+            <GeneralTab
+              displayMode={displayMode}
+              onDisplayModeChange={onDisplayModeChange}
+              settings={generalSettings}
+              onSettingsChange={setGeneralSettings}
+            />
           )}
           {activeTab === 'groups' && (
             <GroupsTab visible={visible && activeTab === 'groups'} sessions={sessions} />
@@ -750,6 +1057,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           )}
           {activeTab === 'remote' && window.electronAPI && (
             <_RemoteTab visible={visible && activeTab === 'remote'} />
+          )}
+          {activeTab === 'ai' && (
+            <AITab />
           )}
         </div>
       </div>

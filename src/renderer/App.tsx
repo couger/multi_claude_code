@@ -8,6 +8,12 @@ import CreateSessionDialog from './components/CreateSessionDialog';
 import SettingsPanel from './components/SettingsPanel';
 import { SessionStatus } from './constants';
 
+interface GeneralSettings {
+  showGroupPanel: boolean;
+  showPerformancePanel: boolean;
+  showIconToggle: boolean;
+}
+
 const App: React.FC = () => {
   const {
     sessions,
@@ -26,6 +32,21 @@ const App: React.FC = () => {
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+
+  // 通用设置状态
+  const [generalSettings, setGeneralSettings] = useState<GeneralSettings>(() => {
+    const saved = localStorage.getItem('generalSettings');
+    return saved ? JSON.parse(saved) : {
+      showGroupPanel: true,
+      showPerformancePanel: true,
+      showIconToggle: true,
+    };
+  });
+
+  // 保存通用设置
+  useEffect(() => {
+    localStorage.setItem('generalSettings', JSON.stringify(generalSettings));
+  }, [generalSettings]);
 
   // 初始化 IPC 监听
   useEffect(() => {
@@ -149,6 +170,7 @@ const App: React.FC = () => {
           onExpandSession={handleExpandSession}
           getAlertCount={getSessionAlertCount}
           onShowSettings={() => setShowSettings(true)}
+          generalSettings={generalSettings}
         />
 
         {/* 展开视图 */}
