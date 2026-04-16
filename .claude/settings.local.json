@@ -19,7 +19,12 @@
       "Bash(cmd /c \"启动应用.bat\")",
       "Bash(cmd /c \"启动应用.bat > output.txt 2>&1\")",
       "Bash(cmd /c \"start /B 启动应用.bat hidden & ping -n 6 127.0.0.1 >nul & taskkill /f /im node.exe 2>nul\")",
-      "Bash(cmd /c \"dir /x 启动应用.bat\")"
+      "Bash(cmd /c \"dir /x 启动应用.bat\")",
+      "Bash(npm uninstall *)",
+      "Bash(npx tsc *)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :5173)",
+      "Bash(curl -s http://localhost:5173)"
     ]
   }
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Session } from '../stores/sessionStore';
-import { SessionStatus, DisplayMode, DEFAULT_CONFIG } from '../constants';
+import { SessionStatus, DisplayMode } from '../../shared/constants';
+import { DEFAULT_CONFIG } from '../constants';
 import SessionCard from './SessionCard';
 
 // 分组类型定义

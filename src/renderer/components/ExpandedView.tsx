@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Session } from '../stores/sessionStore';
-import { SessionStatus } from '../constants';
+import { SessionStatus } from '../../shared/constants';
 import { useSessionStore } from '../stores/sessionStore';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';

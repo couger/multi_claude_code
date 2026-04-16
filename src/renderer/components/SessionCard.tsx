@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Session } from '../stores/sessionStore';
-import { SessionStatus, DisplayMode } from '../constants';
+import { SessionStatus, DisplayMode } from '../../shared/constants';
 import { useSessionStore } from '../stores/sessionStore';
 
 // 常用参数预设颜色

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
-import { AlertType } from '../constants';
+import { AlertType } from '../../shared/constants';
 
 const AlertManager: React.FC = () => {
   const alerts = useSessionStore((state) => state.alerts);

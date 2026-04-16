@@ -9,7 +9,8 @@ import os from 'os';
 import { v4 as uuidv4 } from 'uuid';
 
 import { sendToRenderer } from './index';
-import { IPC_CHANNELS, SessionStatus, DEFAULT_CONFIG, AlertType } from './constants';
+import { IPC_CHANNELS, DEFAULT_CONFIG } from './constants';
+import { SessionStatus, AlertType } from '../shared/constants';
 
 class ProcessManager {
   sessions: Map<any, any>;

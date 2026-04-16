@@ -4,28 +4,40 @@
 
 import { app, BrowserWindow, ipcMain, dialog, screen } from 'electron';
 import path from 'path';
-import { IPC_CHANNELS, SessionStatus } from './constants';
+import type { Server } from 'http';
+import type { Server as WebSocketServer, WebSocket } from 'ws';
+import { IPC_CHANNELS } from './constants';
+import { SessionStatus } from '../shared/constants';
 import { ProcessManager } from './ProcessManager';
 import { PerformanceMonitor } from './PerformanceMonitor';
 import { GroupManager } from './GroupManager';
+import { WindowManager } from './WindowManager';
 
-let mainWindow: any = null;
-let processManager: any = null;
-let performanceMonitor: any = null;
-let groupManager: any = null;
+// 扩展 BrowserWindow 类型以支持 originalBounds
+declare module 'electron' {
+  interface BrowserWindow {
+    originalBounds?: Electron.Rectangle;
+  }
+}
+
+let mainWindow: BrowserWindow | null = null;
+let windowManager: WindowManager | null = null;
+let processManager: ProcessManager | null = null;
+let performanceMonitor: PerformanceMonitor | null = null;
+let groupManager: GroupManager | null = null;
 let isWindowHidden = false; // 窗口是否处于隐藏状态（收起状态）
 let isManuallyHidden = false; // 手动一键隐藏标志
 let windowAutoHideEnabled = true;
 let hideDirection = 'right'; // 隐藏方向：'right' | 'left' | 'bottom' | 'top'
-let autoHideTimer: any = null; // 自动隐藏定时器
-let autoHideDelayTimer: any = null; // 延迟收起定时器
+let autoHideTimer: ReturnType<typeof setTimeout> | null = null; // 自动隐藏定时器
+let autoHideDelayTimer: ReturnType<typeof setTimeout> | null = null; // 延迟收起定时器
 let isWindowRestored = false; // 窗口是否处于滑出状态
 let currentHandleSize = 10; // 把手大小（像素）
 let isProgrammaticMove = false; // 标记是否为程序控制的窗口移动（防止 move 事件干扰）
 
 // HTTP/WebSocket 服务器相关变量
-let httpServer: any = null;
-let wss: any = null;
+let httpServer: Server | null = null;
+let wss: WebSocketServer | null = null;
 let httpPort = 8888;
 let httpAccessToken = '';
 let allowedIPs = new Set<string>();
@@ -33,7 +45,7 @@ let httpServerEnabled = false; // Web 访问开关（默认关闭）
 
 // WebSocket 客户端追踪
 interface WsClientInfo {
-  ws: any;
+  ws: WebSocket;
   ip: string;
   connectedAt: Date;
   id: string;
@@ -422,8 +434,15 @@ function createWindow() {
     },
   });
 
-  // 启用贴边隐藏功能
-  setupWindowAutoHide();
+  // 创建窗口管理器并启用贴边隐藏功能
+  windowManager = new WindowManager(mainWindow, {
+    restoreWidth: 500,
+    restoreHeight: 600,
+    handleSize: 10,
+    edgeThreshold: 10,
+    autoHideDelayMs: 1000,
+  });
+  windowManager.setupAutoHide();
 
   if (process.env.NODE_ENV === 'development' || process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173');
@@ -805,12 +824,12 @@ function initIPC() {
   // 收起会话时恢复原始窗口大小
   ipcMain.on(IPC_CHANNELS.WINDOW_UNMAXIMIZE, () => {
     if (!mainWindow) return;
-    
+
     // 如果窗口已最大化，先取消最大化
     if (mainWindow.isMaximized()) {
       mainWindow.unmaximize();
     }
-    
+
     // 恢复原始尺寸
     if (mainWindow.originalBounds) {
       mainWindow.setBounds(mainWindow.originalBounds);
@@ -1543,6 +1562,28 @@ app.whenReady().then(() => {
       }
     }
   });
+});
+
+// 全局错误处理
+process.on('uncaughtException', (error) => {
+  console.error('未捕获的异常:', error);
+  // 可以在这里发送错误通知到渲染进程
+  if (mainWindow) {
+    try {
+      mainWindow.webContents.send('error:uncaught', {
+        message: error.message,
+        stack: error.stack,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (e) {
+      // 忽略发送错误时的错误
+    }
+  }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('未处理的Promise拒绝:', reason);
+  // 记录但不崩溃
 });
 
 app.on('before-quit', () => {

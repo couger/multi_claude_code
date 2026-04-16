@@ -2,6 +2,8 @@
  * 渲染进程常量
  */
 
+import { SessionStatus, AlertType, DisplayMode, SHARED_DEFAULT_CONFIG } from '../shared/constants';
+
 export const IPC_CHANNELS = {
   // 渲染进程 -> 主进程
   CREATE_SESSION: 'session:create',
@@ -20,34 +22,12 @@ export const IPC_CHANNELS = {
   ALERT: 'alert:trigger',
 } as const;
 
-export enum SessionStatus {
-  RUNNING = 'running',
-  PAUSED = 'paused',
-  COMPLETED = 'completed',
-  ERROR = 'error',
-  IDLE = 'idle',
-}
-
-export enum AlertType {
-  USER_INPUT = 'user_input',
-  TASK_COMPLETE = 'task_complete',
-  ERROR = 'error',
-  WARNING = 'warning',
-}
-
-export enum DisplayMode {
-  THUMBNAIL = 'thumbnail',
-  ICON = 'icon',
-}
-
+/**
+ * 默认配置（渲染进程特有）
+ */
 export const DEFAULT_CONFIG = {
-  maxOutputLines: 1000,
-  sidebarWidth: 280,
-  thumbnailHeight: 150,
-  iconSize: 48,
-  autoHideSidebar: true,
-  sidebarHideDelay: 2000,
-  alertSound: true,
-  claudeCommand: 'claude',
-  defaultWorkDir: '~',
+  ...SHARED_DEFAULT_CONFIG,
+  claudeCommand: 'claude', // 渲染进程中不需要实际路径，使用默认值
 } as const;
+
+export { SessionStatus, AlertType, DisplayMode };

@@ -4,6 +4,7 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// IPC通道常量定义（与主进程constants.ts保持一致）
 const IPC_CHANNELS = {
   // 渲染进程 -> 主进程
   CREATE_SESSION: 'session:create',

@@ -6,7 +6,7 @@ import TitleBar from './components/TitleBar';
 import AlertManager from './components/AlertManager';
 import CreateSessionDialog from './components/CreateSessionDialog';
 import SettingsPanel from './components/SettingsPanel';
-import { SessionStatus } from './constants';
+import { SessionStatus } from '../shared/constants';
 
 interface GeneralSettings {
   showGroupPanel: boolean;

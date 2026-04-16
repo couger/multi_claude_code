@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { SessionStatus, AlertType, DisplayMode } from '../constants';
+import { SessionStatus, AlertType, DisplayMode } from '../../shared/constants';
 
 export interface Session {
   id: string;

@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Session } from '../stores/sessionStore';
-import { DisplayMode } from '../constants';
+import { DisplayMode } from '../../shared/constants';
 
 // ======================== 类型定义 ========================
 
