@@ -20,6 +20,7 @@ interface AIConfig {
   model: string;
   temperature: number;
   maxTokens: number;
+  contextLength: number;
 }
 
 interface SettingsPanelProps {
@@ -28,6 +29,8 @@ interface SettingsPanelProps {
   sessions: Session[];
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
+  generalSettings: GeneralSettings;
+  setGeneralSettings: React.Dispatch<React.SetStateAction<GeneralSettings>>;
 }
 
 // ======================== 子组件：通用 ========================
@@ -35,7 +38,6 @@ interface SettingsPanelProps {
 interface GeneralSettings {
   showGroupPanel: boolean;
   showPerformancePanel: boolean;
-  showIconToggle: boolean;
 }
 
 const GeneralTab: React.FC<{
@@ -93,26 +95,6 @@ const GeneralTab: React.FC<{
               }`} />
             </button>
           </div>
-
-          {/* 图标切换功能开关 */}
-          <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
-            <div className="flex items-center gap-2">
-              <svg className="w-3.5 h-3.5 text-dark-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-              </svg>
-              <span className="text-xs text-dark-200">图标切换</span>
-            </div>
-            <button
-              onClick={() => toggleSetting('showIconToggle')}
-              className={`relative w-10 h-5 rounded-full transition-colors ${
-                settings.showIconToggle ? 'bg-accent-primary' : 'bg-dark-600'
-              }`}
-            >
-              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                settings.showIconToggle ? 'left-5' : 'left-0.5'
-              }`} />
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -132,16 +114,33 @@ const AITab: React.FC = () => {
       model: 'gpt-4o',
       temperature: 0.7,
       maxTokens: 4096,
+      contextLength: 8192,
     };
   });
   const [showApiKey, setShowApiKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  
+  // 提示词相关状态
+  const [promptFiles, setPromptFiles] = useState<string[]>([]);
+  const [selectedPromptFile, setSelectedPromptFile] = useState<string>('');
+  const [promptContent, setPromptContent] = useState<string>('');
+  const [loadingPromptFiles, setLoadingPromptFiles] = useState(false);
 
   // 保存配置
   useEffect(() => {
     localStorage.setItem('aiConfig', JSON.stringify(config));
   }, [config]);
+
+  // 处理从文件加载提示词
+  const handleLoadPromptFromFile = async () => {
+    if (!window.electronAPI) {
+      alert('文件选择功能仅在Electron环境中可用');
+      return;
+    }
+    // 简化实现：如果API方法不存在，则显示错误
+    alert('文件选择功能暂未实现，请直接输入提示词');
+  };
 
   const handleTest = async () => {
     if (!config.apiKey) {
@@ -285,7 +284,7 @@ const AITab: React.FC = () => {
       </div>
 
       {/* 参数设置 */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <div className="space-y-2">
           <label className="text-xs text-dark-400">温度 (0-1)</label>
           <input
@@ -309,6 +308,17 @@ const AITab: React.FC = () => {
             className="w-full px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 focus:border-accent-primary focus:outline-none"
           />
         </div>
+        <div className="space-y-2">
+          <label className="text-xs text-dark-400">上下文长度</label>
+          <input
+            type="number"
+            min="512"
+            max="128000"
+            value={config.contextLength}
+            onChange={(e) => setConfig({ ...config, contextLength: parseInt(e.target.value) || 8192 })}
+            className="w-full px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 focus:border-accent-primary focus:outline-none"
+          />
+        </div>
       </div>
 
       {/* 测试连接 */}
@@ -326,6 +336,45 @@ const AITab: React.FC = () => {
         {testResult === 'error' && (
           <span className="text-xs text-red-400">✗ 连接失败</span>
         )}
+      </div>
+
+      {/* 默认提示词 */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-dark-400">默认提示词</label>
+          <button
+            onClick={handleLoadPromptFromFile}
+            disabled={loadingPromptFiles}
+            className="text-xs py-1 px-2 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors disabled:opacity-50"
+          >
+            {loadingPromptFiles ? '加载中...' : '从文件选择'}
+          </button>
+        </div>
+        
+        {selectedPromptFile && (
+          <div className="text-xs text-dark-500">
+            已选择文件: <span className="text-dark-300 font-mono">{selectedPromptFile}</span>
+          </div>
+        )}
+        
+        <div className="space-y-2">
+          <label className="text-xs text-dark-400">提示词内容预览</label>
+          <div className="relative">
+            <textarea
+              value={promptContent}
+              onChange={(e) => setPromptContent(e.target.value)}
+              placeholder="提示词内容将在此显示..."
+              rows={5}
+              className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none font-mono resize-none"
+            />
+            <div className="absolute bottom-2 right-2 text-xs text-dark-500">
+              {promptContent.length} 字符
+            </div>
+          </div>
+          <div className="text-xs text-dark-500">
+            提示词将作为系统消息发送给AI助手，用于指导其行为。
+          </div>
+        </div>
       </div>
 
       {/* 说明 */}
@@ -739,7 +788,20 @@ const _RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
   const [portError, setPortError] = useState('');
   const [toggling, setToggling] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
+  const [selectedIPs, setSelectedIPs] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem('remoteSelectedIPs');
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
   const refreshTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // 保存选中的 IP 地址到 localStorage
+  useEffect(() => {
+    if (selectedIPs.size > 0) {
+      localStorage.setItem('remoteSelectedIPs', JSON.stringify([...selectedIPs]));
+    } else {
+      localStorage.removeItem('remoteSelectedIPs');
+    }
+  }, [selectedIPs]);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -843,6 +905,55 @@ const _RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
     catch (e) { console.error('断开所有客户端失败:', e); }
   }, [fetchStatus, status?.clientCount]);
 
+  // 切换单个IP的选择状态
+  const handleToggleIP = useCallback((ip: string) => {
+    setSelectedIPs(prev => {
+      const newSet = new Set(prev);
+      const isAdding = !newSet.has(ip);
+      if (newSet.has(ip)) {
+        newSet.delete(ip);
+      } else {
+        newSet.add(ip);
+      }
+      
+      // 异步更新服务器的IP白名单
+      if (status?.running && status?.port) {
+        const apiUrl = `http://localhost:${status.port}/api/${isAdding ? 'allow-ip' : 'remove-ip'}`;
+        const method = isAdding ? 'POST' : 'DELETE';
+        const body = isAdding ? JSON.stringify({ ip }) : undefined;
+        const query = !isAdding ? `?ip=${encodeURIComponent(ip)}` : '';
+        
+        fetch(apiUrl + query, {
+          method,
+          headers: isAdding ? { 'Content-Type': 'application/json' } : undefined,
+          body,
+        }).catch(err => {
+          console.error(`Failed to update IP whitelist for ${ip}:`, err);
+        });
+      }
+      
+      return newSet;
+    });
+  }, [status?.running, status?.port]);
+
+  // 选择所有IP
+  const handleSelectAllIPs = useCallback(() => {
+    if (!status?.localIPs) return;
+    setSelectedIPs(new Set(status.localIPs));
+  }, [status?.localIPs]);
+
+  // 清空所有IP选择
+  const handleClearAllIPs = useCallback(() => {
+    setSelectedIPs(new Set());
+  }, []);
+
+  // 获取要显示的IP地址（如果选择了某些IP，则只显示选中的；否则显示全部）
+  const displayedIPs = useMemo(() => {
+    if (!status?.localIPs) return [];
+    if (selectedIPs.size === 0) return status.localIPs; // 没有选择时显示全部
+    return status.localIPs.filter(ip => selectedIPs.has(ip));
+  }, [status?.localIPs, selectedIPs]);
+
   if (!status) return <div className="text-center text-dark-500 text-sm py-8">加载中...</div>;
 
   return (
@@ -902,23 +1013,76 @@ const _RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
       {/* 访问地址 */}
       {status.running && (
         <div className="space-y-2">
-          <label className="text-xs text-dark-400">访问地址</label>
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-dark-400">访问地址</label>
+            <div className="flex items-center gap-1 text-xs">
+              <button
+                onClick={handleSelectAllIPs}
+                className="text-dark-400 hover:text-accent-primary transition-colors"
+                title="选择所有IP"
+              >
+                全选
+              </button>
+              <span className="text-dark-600">|</span>
+              <button
+                onClick={handleClearAllIPs}
+                className="text-dark-400 hover:text-accent-primary transition-colors"
+                title="清除所有选择"
+              >
+                清空
+              </button>
+            </div>
+          </div>
+          
+          {/* 选择说明 */}
+          <div className="text-xs text-dark-500 bg-dark-900/50 px-2 py-1 rounded">
+            勾选要显示的IP地址（不勾选将显示所有地址）
+          </div>
+          
+          {/* IP地址列表 */}
           <div className="space-y-1">
             {status.localIPs.map(ip => (
-              <div key={ip} className="flex items-center gap-2 px-3 py-1.5 bg-dark-900 rounded text-xs">
-                <span className="text-dark-500">http://</span>
-                <span className="text-dark-200 font-mono">{ip}</span>
-                <span className="text-dark-500">:{status.port}</span>
-                <button onClick={async () => {
-                  const url = `http://${ip}:${status.port}/`;
-                  try { await navigator.clipboard.writeText(url); } catch { /* ignore */ }
-                }} className="ml-auto text-dark-400 hover:text-accent-primary transition-colors" title="复制链接">
+              <div key={ip} className="flex items-center gap-2 px-3 py-1.5 bg-dark-900 rounded text-xs hover:bg-dark-800 transition-colors">
+                {/* 复选框 */}
+                <input
+                  type="checkbox"
+                  checked={selectedIPs.has(ip)}
+                  onChange={() => handleToggleIP(ip)}
+                  className="w-3.5 h-3.5 accent-accent-primary bg-dark-700 border-dark-600 rounded focus:ring-0 focus:ring-offset-0"
+                  id={`ip-checkbox-${ip}`}
+                />
+                
+                {/* IP地址标签 */}
+                <label htmlFor={`ip-checkbox-${ip}`} className="flex-1 flex items-center gap-2 cursor-pointer">
+                  <span className="text-dark-500 select-text">http://</span>
+                  <span className="text-dark-200 font-mono select-text">{ip}</span>
+                  <span className="text-dark-500 select-text">:{status.port}</span>
+                </label>
+                
+                {/* 复制按钮 */}
+                <button
+                  onClick={async () => {
+                    const url = `http://${ip}:${status.port}/`;
+                    try { await navigator.clipboard.writeText(url); } catch { /* ignore */ }
+                  }}
+                  className="text-dark-400 hover:text-accent-primary transition-colors p-1"
+                  title="复制链接"
+                >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
                 </button>
               </div>
             ))}
+          </div>
+          
+          {/* 显示状态 */}
+          <div className="text-xs text-dark-500 flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${displayedIPs.length > 0 ? 'bg-accent-primary' : 'bg-dark-600'}`} />
+            <span>
+              当前显示 {displayedIPs.length} 个地址
+              {selectedIPs.size > 0 && `（已选择 ${selectedIPs.size} 个）`}
+            </span>
           </div>
         </div>
       )}
@@ -962,7 +1126,6 @@ const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'general', label: '通用', icon: '⚙' },
   { key: 'groups', label: '分组', icon: '📁' },
   { key: 'performance', label: '性能', icon: '📊' },
-  { key: 'ai', label: '助手AI', icon: '🤖' },
 ];
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -971,23 +1134,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   sessions,
   displayMode,
   onDisplayModeChange,
+  generalSettings,
+  setGeneralSettings,
 }) => {
   const [activeTab, setActiveTab] = useState<TabKey>('general');
-
-  // 通用设置状态 - 从 localStorage 读取
-  const [generalSettings, setGeneralSettings] = useState<GeneralSettings>(() => {
-    const saved = localStorage.getItem('generalSettings');
-    return saved ? JSON.parse(saved) : {
-      showGroupPanel: true,
-      showPerformancePanel: true,
-      showIconToggle: true,
-    };
-  });
-
-  // 保存通用设置到 localStorage
-  useEffect(() => {
-    localStorage.setItem('generalSettings', JSON.stringify(generalSettings));
-  }, [generalSettings]);
 
   // 打开时重置到通用标签
   useEffect(() => {
@@ -1001,6 +1151,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     if (window.electronAPI) {
       tabs.push({ key: 'remote' as TabKey, label: '网络', icon: '🌐' });
     }
+    // 添加 AI 标签页（始终显示）
+    tabs.push({ key: 'ai' as TabKey, label: '助手AI', icon: '🤖' });
     return tabs;
   }, []);
 

@@ -11,7 +11,6 @@ import { SessionStatus } from './constants';
 interface GeneralSettings {
   showGroupPanel: boolean;
   showPerformancePanel: boolean;
-  showIconToggle: boolean;
 }
 
 const App: React.FC = () => {
@@ -39,7 +38,6 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : {
       showGroupPanel: true,
       showPerformancePanel: true,
-      showIconToggle: true,
     };
   });
 
@@ -216,14 +214,18 @@ const App: React.FC = () => {
         onCreate={handleCreateSessionWithOptions}
       />
 
-      {/* 设置面板 */}
-      <SettingsPanel
-        visible={showSettings}
-        onClose={() => setShowSettings(false)}
-        sessions={sessions}
-        displayMode={displayMode}
-        onDisplayModeChange={setDisplayMode}
-      />
+      {/* 设置面板 - 仅在真正的 Electron 环境中显示 */}
+      {window.electronAPI?.isElectron === true && (
+        <SettingsPanel
+          visible={showSettings}
+          onClose={() => setShowSettings(false)}
+          sessions={sessions}
+          displayMode={displayMode}
+          onDisplayModeChange={setDisplayMode}
+          generalSettings={generalSettings}
+          setGeneralSettings={setGeneralSettings}
+        />
+      )}
   </div>
   );
 };

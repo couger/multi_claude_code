@@ -653,14 +653,28 @@ function initIPC() {
         }
       }
     }
+
+    // 根据 IP 去重，保留最新的连接
+    const uniqueClients = new Map<string, { id: string; ip: string; connectedAt: Date }>();
+    for (const client of wsClients.values()) {
+      const existing = uniqueClients.get(client.ip);
+      if (!existing || client.connectedAt > existing.connectedAt) {
+        uniqueClients.set(client.ip, {
+          id: client.id,
+          ip: client.ip,
+          connectedAt: client.connectedAt,
+        });
+      }
+    }
+
     return {
       enabled: httpServerEnabled,
       running: !!httpServer,
       port: httpPort,
       token: httpAccessToken,
       localIPs,
-      clientCount: wsClients.size,
-      clients: Array.from(wsClients.values()).map(c => ({
+      clientCount: wsClients.size, // 仍然返回实际连接数
+      clients: Array.from(uniqueClients.values()).map(c => ({
         id: c.id,
         ip: c.ip,
         connectedAt: c.connectedAt.toISOString(),
@@ -1003,7 +1017,7 @@ async function startHttpServer() {
 
     // ---- 公开端点 ----
 
-    // 健康检查端点
+    // 健康检查端点 - 对所有IP开放
     if (pathname === '/api/status') {
       const interfaces = require('os').networkInterfaces();
       const localIPs: string[] = [];
@@ -1026,6 +1040,17 @@ async function startHttpServer() {
         timestamp: new Date().toISOString(),
       }));
       return;
+    }
+
+    // 如果启用了IP白名单功能，检查客户端IP是否被允许
+    // 注意：allowedIPs 应该包含用户选择的IP地址
+    if (allowedIPs.size > 0 && !allowedIPs.has(clientIP)) {
+      // IP不在白名单中，拒绝访问（除了/login.html和/api/allow-ip等特殊端点）
+      if (pathname !== '/login.html' && pathname !== '/api/allow-ip' && pathname !== '/api/remove-ip') {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'IP address not allowed' }));
+        return;
+      }
     }
 
     // ---- 前端页面代理（浏览器远程访问） ----
@@ -1221,7 +1246,15 @@ async function startHttpServer() {
     const token = parsedUrl.query?.token || '';
     const clientIP = req.socket.remoteAddress || 'unknown';
 
-    if (token !== httpAccessToken && !allowedIPs.has(clientIP)) {
+    // 如果启用了IP白名单（allowedIPs不为空），检查客户端IP是否被允许
+    if (allowedIPs.size > 0 && !allowedIPs.has(clientIP)) {
+      // IP不在白名单中，拒绝连接（即使有有效令牌）
+      ws.close(4003, 'IP address not allowed');
+      return;
+    }
+    
+    // 检查令牌（如果IP在白名单中或没有启用白名单，需要有效令牌）
+    if (token !== httpAccessToken) {
       ws.close(4001, 'Unauthorized');
       return;
     }

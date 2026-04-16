@@ -27,7 +27,6 @@ const DEFAULT_SIDEBAR_WIDTH = 280;
 interface GeneralSettings {
   showGroupPanel: boolean;
   showPerformancePanel: boolean;
-  showIconToggle: boolean;
 }
 
 interface SidebarProps {
@@ -75,6 +74,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
   const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set()); // 展开的分组
+  const [groupPanelCollapsed, setGroupPanelCollapsed] = useState(false); // 分组面板是否折叠
 
   // 获取分组中会话的ID集合
   const groupedSessionIds = useMemo(() => {
@@ -105,13 +105,17 @@ const Sidebar: React.FC<SidebarProps> = ({
   const showGroupFeature = generalSettings?.showGroupPanel !== false;
   // 是否显示性能功能
   const showPerformanceFeature = generalSettings?.showPerformancePanel !== false;
-  // 是否显示图标切换
-  const showIconToggleFeature = generalSettings?.showIconToggle !== false;
+
+  // 实际显示的会话：当分组功能关闭时显示所有会话，否则显示未分组会话
+  const displayedSessions = useMemo(() => {
+    return showGroupFeature ? ungroupedSessions : sessions;
+  }, [showGroupFeature, ungroupedSessions, sessions]);
 
   // 性能监控状态
   const [systemMetrics, setSystemMetrics] = useState<{
     cpu: { usage: number };
     memory: { usagePercent: number };
+    disk?: { usagePercent: number };
   } | null>(null);
 
   // 加载性能数据
@@ -141,6 +145,70 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [togglingRemote, setTogglingRemote] = useState(false);
   const [showNetworkTooltip, setShowNetworkTooltip] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
+  const [showAddresses, setShowAddresses] = useState(false);
+  
+  // 选中的IP地址（从localStorage读取）
+  const [selectedIPs, setSelectedIPs] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem('remoteSelectedIPs');
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
+  
+  // 监听localStorage变化以更新选中的IP
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'remoteSelectedIPs') {
+        const saved = e.newValue;
+        if (saved) {
+          try {
+            const parsed: string[] = JSON.parse(saved);
+            setSelectedIPs(new Set(parsed));
+          } catch {
+            setSelectedIPs(new Set());
+          }
+        } else {
+          setSelectedIPs(new Set());
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    
+    // 定期检查localStorage，确保与设置面板同步（因为storage事件有时不可靠）
+    const interval = setInterval(() => {
+      const saved = localStorage.getItem('remoteSelectedIPs');
+      setSelectedIPs(prev => {
+        if (saved) {
+          try {
+            const parsed: string[] = JSON.parse(saved);
+            const newSet = new Set(parsed);
+            // 只有当实际变化时才更新，避免不必要的重渲染
+            if (prev.size !== newSet.size || ![...prev].every(ip => newSet.has(ip))) {
+              return newSet;
+            }
+          } catch {
+            // 如果解析失败，保持原状
+          }
+        } else {
+          // 如果没有保存的数据，使用空集合
+          if (prev.size !== 0) {
+            return new Set();
+          }
+        }
+        return prev;
+      });
+    }, 1000);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
+  }, []);
+
+  // 计算要显示的IP地址（根据选择过滤）
+  const displayedIPs = useMemo(() => {
+    if (!remoteStatus?.localIPs) return [];
+    if (selectedIPs.size === 0) return remoteStatus.localIPs; // 没有选择时显示全部
+    return remoteStatus.localIPs.filter(ip => selectedIPs.has(ip));
+  }, [remoteStatus?.localIPs, selectedIPs]);
 
   // 加载分组
   useEffect(() => {
@@ -369,54 +437,68 @@ const Sidebar: React.FC<SidebarProps> = ({
             {/* 性能指标 - 仅在性能功能开启时显示 */}
             {showPerformanceFeature && systemMetrics && (
               <div className="flex items-center gap-2 mb-2 text-xs text-dark-400">
-                <div className="flex items-center gap-1" title={`CPU: ${systemMetrics.cpu.usage}%`}>
+                <div className="flex items-center gap-1" title={`CPU: ${systemMetrics.cpu.usage.toFixed(2)}%`}>
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
                   </svg>
                   <span className={`${systemMetrics.cpu.usage > 80 ? 'text-red-400' : systemMetrics.cpu.usage > 50 ? 'text-yellow-400' : 'text-green-400'}`}>
-                    {systemMetrics.cpu.usage.toFixed(0)}%
+                    {systemMetrics.cpu.usage.toFixed(2)}%
                   </span>
                 </div>
                 <div className="w-px h-3 bg-dark-600" />
-                <div className="flex items-center gap-1" title={`内存: ${systemMetrics.memory.usagePercent}%`}>
+                <div className="flex items-center gap-1" title={`内存: ${systemMetrics.memory.usagePercent.toFixed(2)}%`}>
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
                   <span className={`${systemMetrics.memory.usagePercent > 80 ? 'text-red-400' : systemMetrics.memory.usagePercent > 50 ? 'text-yellow-400' : 'text-green-400'}`}>
-                    {systemMetrics.memory.usagePercent.toFixed(0)}%
+                    {systemMetrics.memory.usagePercent.toFixed(2)}%
                   </span>
                 </div>
+                {systemMetrics.disk && (
+                  <>
+                    <div className="w-px h-3 bg-dark-600" />
+                    <div className="flex items-center gap-1" title={`硬盘: ${systemMetrics.disk.usagePercent.toFixed(2)}%`}>
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10h6m-6 4h6" />
+                      </svg>
+                      <span className={`${systemMetrics.disk.usagePercent > 80 ? 'text-red-400' : systemMetrics.disk.usagePercent > 50 ? 'text-yellow-400' : 'text-green-400'}`}>
+                        {systemMetrics.disk.usagePercent.toFixed(2)}%
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-medium text-dark-200">CLI 会话</h2>
               <div className="flex items-center gap-1">
-                {showIconToggleFeature && (
+                {/* 显示模式切换按钮 */}
+                <div className="flex items-center gap-1 bg-dark-700 rounded p-0.5">
                   <button
-                    onClick={() => onDisplayModeChange(
+                    onClick={() => onDisplayModeChange?.(DisplayMode.THUMBNAIL)}
+                    className={`px-2 py-0.5 text-xs rounded transition-colors ${
                       displayMode === DisplayMode.THUMBNAIL
-                        ? DisplayMode.ICON
-                        : DisplayMode.THUMBNAIL
-                    )}
-                    className={`p-1 rounded transition-colors ${
+                        ? 'bg-accent-primary text-dark-900'
+                        : 'text-dark-400 hover:text-dark-200'
+                    }`}
+                    title="预览模式"
+                  >
+                    预览
+                  </button>
+                  <button
+                    onClick={() => onDisplayModeChange?.(DisplayMode.ICON)}
+                    className={`px-2 py-0.5 text-xs rounded transition-colors ${
                       displayMode === DisplayMode.ICON
                         ? 'bg-accent-primary text-dark-900'
-                        : 'bg-dark-700 text-dark-400 hover:bg-dark-600'
+                        : 'text-dark-400 hover:text-dark-200'
                     }`}
-                    title={displayMode === DisplayMode.ICON ? '切换到缩略图模式' : '切换到图标模式'}
+                    title="图标模式"
                   >
-                    {displayMode === DisplayMode.ICON ? (
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                      </svg>
-                    ) : (
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
-                      </svg>
-                    )}
+                    图标
                   </button>
-                )}
+                </div>
                 <span className="text-xs text-dark-500 bg-dark-700 px-2 py-0.5 rounded-full">
                   {sessions.length}
                 </span>
@@ -463,19 +545,19 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
 
-          {/* 会话列表 - 仅显示未分组的会话 */}
+          {/* 会话列表 */}
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {ungroupedSessions.length === 0 && groups.length === 0 ? (
+            {displayedSessions.length === 0 && groups.length === 0 ? (
               <div className="text-center text-dark-500 text-sm py-8">
                 <p>暂无会话</p>
                 <p className="text-xs mt-1">点击上方按钮创建</p>
               </div>
-            ) : ungroupedSessions.length === 0 ? (
+            ) : displayedSessions.length === 0 ? (
               <div className="text-center text-dark-500 text-sm py-4">
                 <p>所有会话已分组</p>
               </div>
             ) : (
-              ungroupedSessions.map((session) => (
+              displayedSessions.map((session) => (
                 <div
                   key={session.id}
                   draggable
@@ -499,13 +581,19 @@ const Sidebar: React.FC<SidebarProps> = ({
           {showGroupFeature && (
             <div className="border-t border-dark-700 p-2">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-dark-400 flex items-center gap-1">
+                <button
+                  onClick={() => setGroupPanelCollapsed(!groupPanelCollapsed)}
+                  className="text-xs text-dark-400 flex items-center gap-1 hover:text-dark-300 transition-colors"
+                >
+                  <svg className={`w-3.5 h-3.5 transition-transform ${groupPanelCollapsed ? '' : 'rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
                   分组
                   <span className="text-dark-500">({groups.length})</span>
-                </span>
+                </button>
                 <button
                   onClick={() => setCreatingGroup(!creatingGroup)}
                   className="text-xs text-accent-primary hover:text-accent-primary/80"
@@ -515,142 +603,188 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               </div>
 
-              {/* 新建分组表单 */}
-              {creatingGroup && (
-                <div className="mb-2 p-2 bg-dark-900 rounded space-y-2">
-                  <input
-                    type="text"
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                    placeholder="分组名称"
-                    className="w-full px-2 py-1 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
-                    autoFocus
-                  />
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-1">
-                      {PRESET_COLORS.slice(0, 6).map((c) => (
-                        <button
-                          key={c}
-                          onClick={() => setNewGroupColor(c)}
-                          className={`w-4 h-4 rounded-sm ${newGroupColor === c ? 'ring-1 ring-white' : ''}`}
-                          style={{ backgroundColor: c }}
-                        />
-                      ))}
-                    </div>
-                    <div className="flex gap-1">
-                      {PRESET_ICONS.slice(0, 4).map((ic) => (
-                        <button
-                          key={ic}
-                          onClick={() => setNewGroupIcon(ic)}
-                          className={`w-5 h-5 rounded text-xs ${newGroupIcon === ic ? 'bg-dark-600' : 'hover:bg-dark-700'}`}
-                        >
-                          {ic}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={handleCreateGroup}
-                      disabled={!newGroupName.trim()}
-                      className="flex-1 py-1 bg-accent-primary text-dark-900 rounded text-xs font-medium hover:bg-accent-primary/80 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      创建
-                    </button>
-                    <button
-                      onClick={() => setCreatingGroup(false)}
-                      className="px-2 py-1 bg-dark-700 text-dark-300 rounded text-xs hover:bg-dark-600"
-                    >
-                      取消
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* 分组列表 - 可折叠，每个分组下显示会话 */}
-              <div className="space-y-1">
-                {groups.length === 0 ? (
-                  <div className="text-xs text-dark-500 text-center py-2">
-                    点击 + 创建分组
-                  </div>
-                ) : (
-                  groups.map((group) => {
-                    const isExpanded = expandedGroups.has(group.id);
-                    const groupSessions = sessions.filter(s => group.sessionIds.includes(s.id));
-                    return (
-                      <div key={group.id}>
-                        <div
-                          className={`p-2 rounded cursor-pointer transition-colors ${
-                            dragOverGroupId === group.id
-                              ? 'bg-accent-primary/20 border border-accent-primary border-dashed'
-                              : 'bg-dark-900 hover:bg-dark-700'
-                          }`}
-                          onDragOver={(e) => handleDragOver(e, group.id)}
-                          onDragLeave={handleDragLeave}
-                          onDrop={() => handleDrop(group.id)}
-                          onClick={() => toggleGroupExpand(group.id)}
-                        >
-                          <div className="flex items-center gap-2">
-                            <svg
-                              className={`w-3 h-3 text-dark-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                            </svg>
-                            <span className="text-sm">{group.icon}</span>
-                            <span className="text-xs text-dark-200 truncate flex-1">{group.name}</span>
-                            <span
-                              className="w-3 h-3 rounded-sm shrink-0"
-                              style={{ backgroundColor: group.color }}
-                              title={group.color}
+              {!groupPanelCollapsed && (
+                <>
+                  {/* 新建分组表单 */}
+                  {creatingGroup && (
+                    <div className="mb-2 p-2 bg-dark-900 rounded space-y-2">
+                      <input
+                        type="text"
+                        value={newGroupName}
+                        onChange={(e) => setNewGroupName(e.target.value)}
+                        placeholder="分组名称"
+                        className="w-full px-2 py-1 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+                        autoFocus
+                      />
+                      <div className="flex items-center gap-2">
+                        <div className="flex gap-1">
+                          {PRESET_COLORS.slice(0, 6).map((c) => (
+                            <button
+                              key={c}
+                              onClick={() => setNewGroupColor(c)}
+                              className={`w-4 h-4 rounded-sm ${newGroupColor === c ? 'ring-1 ring-white' : ''}`}
+                              style={{ backgroundColor: c }}
                             />
-                            <span className="text-xs text-dark-500">{group.sessionIds.length}</span>
-                          </div>
-                          {dragOverGroupId === group.id && (
-                            <div className="mt-1 text-xs text-accent-primary text-center">
-                              释放以添加会话
-                            </div>
-                          )}
+                          ))}
                         </div>
-                        {/* 展开时显示分组内的会话 */}
-                        {isExpanded && groupSessions.length > 0 && (
-                          <div className="ml-4 mt-1 space-y-1 border-l-2 border-dark-600 pl-2">
-                            {groupSessions.map((session) => (
-                              <div
-                                key={session.id}
-                                draggable
-                                onDragStart={() => handleDragStart(session.id)}
-                                onDragEnd={() => setDraggingSessionId(null)}
-                              >
-                                <SessionCard
-                                  session={session}
-                                  displayMode={displayMode}
-                                  isExpanded={expandedSessionId === session.id}
-                                  alertCount={getAlertCount(session.id)}
-                                  onClose={() => onCloseSession(session.id)}
-                                  onExpand={() => onExpandSession(session.id)}
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                        <div className="flex gap-1">
+                          {PRESET_ICONS.slice(0, 4).map((ic) => (
+                            <button
+                              key={ic}
+                              onClick={() => setNewGroupIcon(ic)}
+                              className={`w-5 h-5 rounded text-xs ${newGroupIcon === ic ? 'bg-dark-600' : 'hover:bg-dark-700'}`}
+                            >
+                              {ic}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    );
-                  })
-                )}
-              </div>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={handleCreateGroup}
+                          disabled={!newGroupName.trim()}
+                          className="flex-1 py-1 bg-accent-primary text-dark-900 rounded text-xs font-medium hover:bg-accent-primary/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          创建
+                        </button>
+                        <button
+                          onClick={() => setCreatingGroup(false)}
+                          className="px-2 py-1 bg-dark-700 text-dark-300 rounded text-xs hover:bg-dark-600"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 分组列表 - 可折叠，每个分组下显示会话 */}
+                  <div className="space-y-1">
+                    {groups.length === 0 ? (
+                      <div className="text-xs text-dark-500 text-center py-2">
+                        点击 + 创建分组
+                      </div>
+                    ) : (
+                      groups.map((group) => {
+                        const isExpanded = expandedGroups.has(group.id);
+                        const groupSessions = sessions.filter(s => group.sessionIds.includes(s.id));
+                        return (
+                          <div key={group.id}>
+                            <div
+                              className={`p-2 rounded cursor-pointer transition-colors ${
+                                dragOverGroupId === group.id
+                                  ? 'bg-accent-primary/20 border border-accent-primary border-dashed'
+                                  : 'bg-dark-900 hover:bg-dark-700'
+                              }`}
+                              onDragOver={(e) => handleDragOver(e, group.id)}
+                              onDragLeave={handleDragLeave}
+                              onDrop={() => handleDrop(group.id)}
+                              onClick={() => toggleGroupExpand(group.id)}
+                            >
+                              <div className="flex items-center gap-2">
+                                <svg
+                                  className={`w-3 h-3 text-dark-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                                <span className="text-sm">{group.icon}</span>
+                                <span className="text-xs text-dark-200 truncate flex-1">{group.name}</span>
+                                <span
+                                  className="w-3 h-3 rounded-sm shrink-0"
+                                  style={{ backgroundColor: group.color }}
+                                  title={group.color}
+                                />
+                                <span className="text-xs text-dark-500">{group.sessionIds.length}</span>
+                              </div>
+                              {dragOverGroupId === group.id && (
+                                <div className="mt-1 text-xs text-accent-primary text-center">
+                                  释放以添加会话
+                                </div>
+                              )}
+                            </div>
+                            {/* 展开时显示分组内的会话 */}
+                            {isExpanded && groupSessions.length > 0 && (
+                              <div className="ml-4 mt-1 space-y-1 border-l-2 border-dark-600 pl-2">
+                                {groupSessions.map((session) => (
+                                  <div
+                                    key={session.id}
+                                    draggable
+                                    onDragStart={() => handleDragStart(session.id)}
+                                    onDragEnd={() => setDraggingSessionId(null)}
+                                  >
+                                    <SessionCard
+                                      session={session}
+                                      displayMode={displayMode}
+                                      isExpanded={expandedSessionId === session.id}
+                                      alertCount={getAlertCount(session.id)}
+                                      onClose={() => onCloseSession(session.id)}
+                                      onExpand={() => onExpandSession(session.id)}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
-          {/* 底部：网络功能 + 设置按钮 + 批量操作 */}
+          {/* 批量操作按钮 */}
+          {sessions.length > 0 && (
+            <div className="flex gap-1.5 p-2">
+              <button
+                onClick={async () => {
+                  const count = prompt('批量创建多少个会话？', '3');
+                  if (!count) return;
+                  const n = parseInt(count, 10);
+                  if (isNaN(n) || n < 1 || n > 20) {
+                    alert('请输入 1-20 之间的数字');
+                    return;
+                  }
+                  for (let i = 0; i < n; i++) {
+                    try {
+                      await window.electronAPI.createSession({ name: `CLI #${sessions.length + i + 1}` });
+                    } catch (e) {
+                      console.error('批量创建失败:', e);
+                    }
+                  }
+                }}
+                className="flex-1 text-xs py-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors"
+              >
+                批量创建
+              </button>
+              <button
+                onClick={async () => {
+                  if (!confirm(`确定关闭全部 ${sessions.length} 个会话？`)) return;
+                  for (const s of sessions) {
+                    try {
+                      await window.electronAPI.killSession(s.id);
+                    } catch (e) {
+                      console.error('关闭失败:', e);
+                    }
+                  }
+                }}
+                className="flex-1 text-xs py-1.5 bg-dark-700 text-red-400 rounded hover:bg-red-900/30 transition-colors"
+              >
+                全部关闭
+              </button>
+            </div>
+          )}
+
+          {/* 底部：网络功能 + 设置按钮 */}
           <div className="p-2 border-t border-dark-700 space-y-1.5">
             {/* 网络功能切换开关 */}
             {remoteStatus && (
-              <div className="p-2 bg-dark-900 rounded space-y-1">
-                {/* 第一行：网络状态 + 复制令牌 + 开关 */}
-                <div className="flex items-center justify-between">
+              <div className="relative">
+                {/* 第一行：网络状态 + 复制令牌 + 开关 + 下拉按钮 */}
+                <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
                   <div className="flex items-center gap-2">
                     <svg className="w-3.5 h-3.5 text-dark-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
@@ -694,31 +828,47 @@ const Sidebar: React.FC<SidebarProps> = ({
                         remoteStatus.enabled ? 'left-5' : 'left-0.5'
                       }`} />
                     </button>
+                    {/* 下拉按钮 */}
+                    {displayedIPs.length > 0 && (
+                      <button
+                        onClick={() => setShowAddresses(!showAddresses)}
+                        className="p-1 rounded hover:bg-dark-700 transition-colors"
+                        title={showAddresses ? "收起地址列表" : "展开地址列表"}
+                      >
+                        <svg
+                          className={`w-3.5 h-3.5 text-dark-400 hover:text-dark-200 transition-transform ${showAddresses ? 'rotate-180' : ''}`}
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 </div>
-                {/* 第二行：访问地址 */}
-                {remoteStatus.running && remoteStatus.localIPs.length > 0 && (
-                  <div className="flex items-center gap-1 pt-1 border-t border-dark-700">
-                    <span className="text-xs text-dark-500 shrink-0">访问地址:</span>
-                    <div className="flex-1 flex items-center gap-1 overflow-x-auto">
-                      {remoteStatus.localIPs.map((ip, idx) => (
-                        <div key={ip} className="flex items-center gap-0.5 shrink-0">
-                          <span className="text-xs text-dark-300 font-mono">http://{ip}:{remoteStatus.port}</span>
+                {/* 下拉地址列表 */}
+                {remoteStatus.running && displayedIPs.length > 0 && showAddresses && (
+                  <div className="mt-1 bg-dark-900 border border-dark-700 rounded overflow-hidden">
+                    <div className="p-2 border-b border-dark-700">
+                      <div className="text-xs text-dark-500">访问地址 (共 {displayedIPs.length} 个):</div>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      {displayedIPs.map((ip, idx) => (
+                        <div key={ip} className="flex items-center justify-between p-2 hover:bg-dark-800 transition-colors border-b border-dark-800/50 last:border-b-0">
+                          <span className="text-xs text-dark-300 font-mono select-text">http://{ip}:{remoteStatus.port}</span>
                           <button
                             onClick={async () => {
                               const url = `http://${ip}:${remoteStatus.port}/`;
                               try { await navigator.clipboard.writeText(url); } catch { /* ignore */ }
                             }}
-                            className="p-0.5 rounded hover:bg-dark-700 transition-colors"
+                            className="p-1 rounded hover:bg-dark-700 transition-colors"
                             title="复制地址"
                           >
                             <svg className="w-3 h-3 text-dark-400 hover:text-dark-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                             </svg>
                           </button>
-                          {idx < remoteStatus.localIPs.length - 1 && (
-                            <span className="text-dark-600 text-xs">|</span>
-                          )}
                         </div>
                       ))}
                     </div>
@@ -727,8 +877,8 @@ const Sidebar: React.FC<SidebarProps> = ({
               </div>
             )}
 
-            {/* 设置按钮 - 仅在 Electron 环境中显示 */}
-            {window.electronAPI && (
+            {/* 设置按钮 - 仅在真正的 Electron 环境中显示 */}
+            {window.electronAPI?.isElectron === true && (
               <button
                 onClick={onShowSettings}
                 className="w-full text-xs py-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors flex items-center justify-center gap-1"
@@ -739,47 +889,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </svg>
                 设置
               </button>
-            )}
-
-            {sessions.length > 0 && (
-              <div className="flex gap-1.5">
-                <button
-                  onClick={async () => {
-                    const count = prompt('批量创建多少个会话？', '3');
-                    if (!count) return;
-                    const n = parseInt(count, 10);
-                    if (isNaN(n) || n < 1 || n > 20) {
-                      alert('请输入 1-20 之间的数字');
-                      return;
-                    }
-                    for (let i = 0; i < n; i++) {
-                      try {
-                        await window.electronAPI.createSession({ name: `CLI #${sessions.length + i + 1}` });
-                      } catch (e) {
-                        console.error('批量创建失败:', e);
-                      }
-                    }
-                  }}
-                  className="flex-1 text-xs py-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors"
-                >
-                  批量创建
-                </button>
-                <button
-                  onClick={async () => {
-                    if (!confirm(`确定关闭全部 ${sessions.length} 个会话？`)) return;
-                    for (const s of sessions) {
-                      try {
-                        await window.electronAPI.killSession(s.id);
-                      } catch (e) {
-                        console.error('关闭失败:', e);
-                      }
-                    }
-                  }}
-                  className="flex-1 text-xs py-1.5 bg-dark-700 text-red-400 rounded hover:bg-red-900/30 transition-colors"
-                >
-                  全部关闭
-                </button>
-              </div>
             )}
 
             {sessions.length > 0 && (

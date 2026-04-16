@@ -88,9 +88,21 @@ class BrowserAPI {
         }
       };
 
-      this.ws.onclose = () => {
-        console.log('[BrowserAPI] WebSocket disconnected');
-        // 3秒后重连
+      this.ws.onclose = (event) => {
+        console.log(`[BrowserAPI] WebSocket disconnected: code=${event.code}, reason=${event.reason}`);
+        // 如果是被踢出（4002）、未授权（4001）或令牌刷新（4003），则重定向到登录页面
+        if (event.code === 4001 || event.code === 4002 || event.code === 4003) {
+          console.log(`[BrowserAPI] 连接被关闭，需要重新登录，重定向到登录页面`);
+          // 清除重连定时器
+          if (this.wsReconnectTimer) {
+            clearTimeout(this.wsReconnectTimer);
+            this.wsReconnectTimer = null;
+          }
+          // 重定向到登录页面
+          window.location.href = '/login.html';
+          return;
+        }
+        // 其他情况（如网络错误）3秒后重连
         this.wsReconnectTimer = setTimeout(() => this.connectWs(), 3000);
       };
 
