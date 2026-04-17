@@ -27,6 +27,7 @@ export interface ElectronAPI {
   onSessionStatus: (callback: (data: any) => void) => void;
   onSessionClosed: (callback: (data: any) => void) => void;
   onAlert: (callback: (data: any) => void) => void;
+  onTrayCreateSession: (callback: () => void) => void;
 
   // 移除监听
   removeAllListeners: (channel: string) => void;

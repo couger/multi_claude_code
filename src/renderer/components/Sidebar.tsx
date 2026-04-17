@@ -600,7 +600,13 @@ const Sidebar: React.FC<SidebarProps> = ({
               onClick={async (e) => {
                 e.stopPropagation();
                 try {
-                  await window.electronAPI.createSession();
+                  // 从localStorage获取上次工作目录和参数
+                  const lastWorkDir = localStorage.getItem('lastWorkDir');
+                  const lastArgs = localStorage.getItem('lastArgs');
+                  await window.electronAPI.createSession({
+                    workDir: lastWorkDir || undefined,
+                    args: lastArgs || undefined,
+                  });
                 } catch (err) {
                   console.error('快速创建失败:', err);
                 }

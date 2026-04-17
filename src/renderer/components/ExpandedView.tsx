@@ -127,6 +127,28 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
         window.electronAPI.sendInput(session.id, data);
       });
 
+      // 处理键盘快捷键 - Ctrl+C 复制，Ctrl+V 粘贴
+      terminal.onKey(({ domEvent }) => {
+        // Ctrl+C 复制选中文本
+        if (domEvent.ctrlKey && (domEvent.key === 'c' || domEvent.key === 'C')) {
+          const selection = terminal.getSelection();
+          if (selection) {
+            navigator.clipboard.writeText(selection).catch(() => { /* ignore */ });
+          }
+          return;
+        }
+        // Ctrl+V 粘贴
+        if (domEvent.ctrlKey && (domEvent.key === 'v' || domEvent.key === 'V')) {
+          domEvent.preventDefault();
+          navigator.clipboard.readText().then(text => {
+            if (text) {
+              window.electronAPI.sendInput(session.id, text);
+            }
+          }).catch(() => { /* ignore */ });
+          return;
+        }
+      });
+
       // 加载已有输出
       window.electronAPI.getSessionOutput(session.id).then((savedOutput) => {
         if (savedOutput && terminal) {
@@ -335,6 +357,8 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
                 onClick={() => {
                   setShowEscConfirm(false);
                   if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
+                  // 恢复终端焦点
+                  xtermRef.current?.focus();
                 }}
                 className="flex-1 px-3 py-1.5 bg-dark-700 text-dark-200 rounded text-xs hover:bg-dark-600 transition-colors"
               >
@@ -345,6 +369,8 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
                   window.electronAPI.sendInput(session.id, '\x1b');
                   setShowEscConfirm(false);
                   if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
+                  // 恢复终端焦点
+                  xtermRef.current?.focus();
                 }}
                 className="flex-1 px-3 py-1.5 bg-accent-danger text-white rounded text-xs hover:bg-red-500 transition-colors"
               >

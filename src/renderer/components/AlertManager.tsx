@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
-import { AlertType, AlertNotifyMode } from '../../shared/constants';
+import { AlertType, AlertNotifyMode, AlertSeverity, ALERT_SEVERITY_MAP } from '../../shared/constants';
 
 const AlertManager: React.FC = () => {
   const alerts = useSessionStore((state) => state.alerts);
@@ -21,66 +21,67 @@ const AlertManager: React.FC = () => {
 
   const alertCount = unacknowledgedAlerts.length;
 
-  const getAlertStyle = (type: AlertType) => {
-    switch (type) {
-      case AlertType.USER_INPUT:
-        return { bg: 'bg-accent-warning', icon: '✋', text: 'text-dark-900' };
-      case AlertType.TASK_COMPLETE:
-        return { bg: 'bg-accent-success', icon: '✓', text: 'text-dark-900' };
-      case AlertType.ERROR:
-        return { bg: 'bg-accent-danger', icon: '⚠', text: 'text-white' };
-      case AlertType.WARNING:
-        return { bg: 'bg-accent-warning', icon: '⚠', text: 'text-dark-900' };
+  // 按告警严重等级获取颜色样式
+  const getAlertStyle = (alert: { type: AlertType }) => {
+    const severity = ALERT_SEVERITY_MAP[alert.type] || AlertSeverity.INFO;
+    switch (severity) {
+      case AlertSeverity.CRITICAL:
+        return { bg: 'bg-red-600', icon: '🔴', text: 'text-white', ring: 'ring-red-400' };
+      case AlertSeverity.ERROR:
+        return { bg: 'bg-red-500', icon: '⚠️', text: 'text-white', ring: 'ring-red-400' };
+      case AlertSeverity.WARNING:
+        return { bg: 'bg-yellow-500', icon: '⚠', text: 'text-dark-900', ring: 'ring-yellow-400' };
+      case AlertSeverity.INFO:
       default:
-        return { bg: 'bg-dark-600', icon: 'ℹ', text: 'text-dark-100' };
+        return { bg: 'bg-blue-500', icon: 'ℹ', text: 'text-white', ring: 'ring-blue-400' };
     }
   };
 
-  const getMostSevereAlertType = (): AlertType => {
+  const getMostSevereAlert = (): { type: AlertType } => {
     const priorityOrder = [AlertType.ERROR, AlertType.WARNING, AlertType.USER_INPUT, AlertType.TASK_COMPLETE];
     for (const type of priorityOrder) {
-      if (unacknowledgedAlerts.some(a => a.type === type)) return type;
+      const alert = unacknowledgedAlerts.find(a => a.type === type);
+      if (alert) return alert;
     }
-    return AlertType.WARNING;
+    return { type: AlertType.WARNING };
   };
 
   if (alertCount === 0) return null;
 
-  const summaryStyle = getAlertStyle(getMostSevereAlertType());
-
-  // 静默模式：只显示数字角标
-  if (alertConfig.silentMode && !expanded) {
-    return (
-      <div className="fixed bottom-4 right-4 z-50">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setAlertSilentMode(false)}
-            className="w-8 h-8 bg-dark-700 hover:bg-dark-600 rounded-full flex items-center justify-center transition-colors"
-            title="取消静默"
-          >
-            <svg className="w-3.5 h-3.5 text-dark-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-            </svg>
-          </button>
-          <button
-            onClick={() => setExpanded(true)}
-            className={`${summaryStyle.bg} ${summaryStyle.text} w-10 h-10 rounded-full shadow-lg flex items-center justify-center relative cursor-pointer hover:scale-110 transition-transform`}
-          >
-            <span className="text-sm font-bold">{alertCount}</span>
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const summaryStyle = getAlertStyle(getMostSevereAlert());
+  const isSilent = alertConfig.silentMode;
 
   return (
     <div className="fixed bottom-4 right-4 z-50 space-y-1.5">
-      {/* 汇总气泡 - 紧凑版 */}
+      {/* 汇总气泡 - 统一切换按钮 */}
       <div
-        className={`${summaryStyle.bg} ${summaryStyle.text} rounded-full shadow-lg px-3 py-1.5 fade-in cursor-pointer hover:shadow-xl transition-shadow flex items-center gap-2`}
+        className={`${summaryStyle.bg} ${summaryStyle.text} rounded-full shadow-lg px-3 py-1.5 fade-in cursor-pointer hover:shadow-xl transition-all flex items-center gap-2 ${
+          isSilent ? 'ring-2 ring-offset-2 ring-offset-dark-900 ' + summaryStyle.ring : ''
+        }`}
         onClick={() => setExpanded(!expanded)}
       >
+        {/* 静默/非静默切换图标 */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setAlertSilentMode(!isSilent);
+          }}
+          className={`w-5 h-5 rounded-full flex items-center justify-center transition-colors ${
+            isSilent ? 'bg-dark-700/50 text-dark-300' : 'bg-white/20 text-inherit'
+          }`}
+          title={isSilent ? '点击取消静默' : '点击开启静默'}
+        >
+          {isSilent ? (
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+            </svg>
+          ) : (
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            </svg>
+          )}
+        </button>
         <span className="text-sm">{summaryStyle.icon}</span>
         <span className="text-xs font-medium">{alertCount}</span>
         <span className="text-xs opacity-70">
@@ -99,21 +100,11 @@ const AlertManager: React.FC = () => {
             >
               全部清除
             </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); setAlertSilentMode(true); setExpanded(false); }}
-              className="flex-1 px-2 py-1 bg-dark-700 text-dark-300 rounded text-xs hover:bg-dark-600 transition-colors flex items-center justify-center gap-1"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-              </svg>
-              静默
-            </button>
           </div>
 
           {/* 告警条目 - 紧凑版 */}
           {unacknowledgedAlerts.map((alert) => {
-            const style = getAlertStyle(alert.type);
+            const style = getAlertStyle(alert);
             const session = sessions.find((s) => s.id === alert.sessionId);
 
             return (

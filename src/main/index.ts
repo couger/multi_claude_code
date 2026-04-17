@@ -177,24 +177,26 @@ function updateTrayMenu() {
         .filter((s: any) => s.status === SessionStatus.RUNNING).length
     : 0;
 
+  const isVisible = mainWindow?.isVisible() && !mainWindow?.isMinimized() && !isWindowHidden;
+  const openAtLogin = app.getLoginItemSettings().openAtLogin;
+
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: '显示主窗口',
+      label: isVisible ? '隐藏窗口' : '显示窗口',
       click: () => {
         if (!mainWindow) return;
-        ensureWindowVisible();
-        if (isWindowHidden) restoreWindow();
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.show();
-        mainWindow.focus();
+        if (isVisible) {
+          mainWindow.hide();
+        } else {
+          ensureWindowVisible();
+          if (isWindowHidden) restoreWindow();
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+        }
+        updateTrayMenu();
       },
     },
-    { type: 'separator' },
-    {
-      label: `运行中会话: ${runningCount}`,
-      enabled: false,
-    },
-    { type: 'separator' },
     {
       label: '新建会话',
       click: () => {
@@ -204,6 +206,11 @@ function updateTrayMenu() {
         mainWindow.focus();
         mainWindow.webContents.send('tray:create-session');
       },
+    },
+    { type: 'separator' },
+    {
+      label: `运行中会话: ${runningCount}`,
+      enabled: false,
     },
     {
       label: '一键贴边隐藏',
@@ -221,13 +228,58 @@ function updateTrayMenu() {
           }
         }
         hideWindowToEdge(targetDisplay, 'right');
+        updateTrayMenu();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '开机自动启动',
+      type: 'checkbox',
+      checked: openAtLogin,
+      click: (menuItem) => {
+        app.setLoginItemSettings({
+          openAtLogin: menuItem.checked,
+          openAsHidden: false,
+        });
+      },
+    },
+    {
+      label: '关闭时最小化到托盘',
+      type: 'checkbox',
+      checked: minimizeToTrayOnClose,
+      click: (menuItem) => {
+        minimizeToTrayOnClose = menuItem.checked;
+        // 保存设置
+        try {
+          const fsModule = require('fs');
+          const configDir = path.join(require('os').homedir(), '.claude-code-manager');
+          const configFile = path.join(configDir, 'config.json');
+          let config: any = {};
+          if (fsModule.existsSync(configFile)) {
+            config = JSON.parse(fsModule.readFileSync(configFile, 'utf-8'));
+          }
+          config.minimizeToTrayOnClose = menuItem.checked;
+          fsModule.writeFileSync(configFile, JSON.stringify(config, null, 2));
+        } catch { /* ignore */ }
       },
     },
     { type: 'separator' },
     {
       label: '退出',
       click: () => {
-        app.quit();
+        // 强制关闭所有会话并退出
+        if (processManager) {
+          processManager.killAllSessions();
+        }
+        // 销毁托盘
+        if (tray) {
+          tray.destroy();
+          tray = null;
+        }
+        // 关闭HTTP服务器
+        stopHttpServer(true);
+        // 强制退出进程
+        app.exit(0);
       },
     },
   ]);
@@ -900,10 +952,11 @@ function initIPC() {
 
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
   ipcMain.on('window:maximize', () => {
-    if (mainWindow?.isMaximized()) {
+    if (!mainWindow) return;
+    if (mainWindow.isMaximized()) {
       mainWindow.unmaximize();
     } else {
-      mainWindow?.maximize();
+      mainWindow.maximize();
     }
   });
   ipcMain.on('window:close', () => mainWindow?.close());
@@ -911,30 +964,25 @@ function initIPC() {
   // 展开会话时调整窗口大小（避免全屏）
   ipcMain.on(IPC_CHANNELS.WINDOW_MAXIMIZE, () => {
     if (!mainWindow) return;
-    
+
     // 如果窗口已最大化，先取消最大化
     if (mainWindow.isMaximized()) {
       mainWindow.unmaximize();
     }
-    
+
     // 获取当前屏幕尺寸
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-    
+
     // 计算新尺寸：屏幕的 80% 或固定值 1400x900，取较小值
     const targetWidth = Math.min(1400, Math.floor(screenWidth * 0.8));
     const targetHeight = Math.min(900, Math.floor(screenHeight * 0.8));
-    
+
     // 计算居中位置
     const x = Math.floor((screenWidth - targetWidth) / 2);
     const y = Math.floor((screenHeight - targetHeight) / 2);
-    
-    // 保存原始尺寸（如果尚未保存）
-    if (!mainWindow.originalBounds) {
-      mainWindow.originalBounds = mainWindow.getBounds();
-    }
-    
-    // 设置新尺寸
+
+    // 设置新尺寸（不保存 originalBounds，让展开视图独立管理）
     mainWindow.setBounds({ x, y, width: targetWidth, height: targetHeight });
   });
 
@@ -1721,7 +1769,8 @@ function stopHttpServer(graceful = false) {
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   console.log('Another instance is already running. Quitting...');
-  app.quit();
+  // 不能在 app ready 之前使用 dialog，直接退出
+  app.exit(1);
 } else {
   app.on('second-instance', () => {
     // 用户尝试启动第二个实例时，聚焦到已有窗口
@@ -1793,6 +1842,11 @@ process.on('unhandledRejection', (reason, _promise) => {
 
 app.on('before-quit', () => {
   stopHttpServer(true); // 优雅关闭
+  // 关闭所有会话
+  if (processManager) {
+    processManager.killAllSessions();
+  }
+  // 销毁托盘
   if (tray) {
     tray.destroy();
     tray = null;
