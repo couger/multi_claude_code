@@ -19,6 +19,8 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [note, setNote] = useState(session.note);
   const [isEditingNote, setIsEditingNote] = useState(false);
+  const [showEscConfirm, setShowEscConfirm] = useState(false);
+  const escConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const outputBuffers = useSessionStore((state) => state.outputBuffers);
   const output = outputBuffers.get(session.id) || [];
@@ -113,8 +115,15 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
       xtermRef.current = terminal;
       fitAddonRef.current = fitAddon;
 
-      // 处理输入
+      // 处理输入 - 拦截 ESC 键
       terminal.onData((data) => {
+        if (data === '\x1b' || data === '\x1b\x1b') {
+          // ESC 键被按下，显示确认对话框
+          setShowEscConfirm(true);
+          if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
+          escConfirmTimerRef.current = setTimeout(() => setShowEscConfirm(false), 5000);
+          return;
+        }
         window.electronAPI.sendInput(session.id, data);
       });
 
@@ -211,6 +220,40 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 复制按钮 */}
+          <button
+            onClick={async () => {
+              const selection = xtermRef.current?.getSelection();
+              if (selection) {
+                try { await navigator.clipboard.writeText(selection); } catch { /* ignore */ }
+              }
+            }}
+            className="p-1.5 hover:bg-dark-700 rounded transition-colors"
+            title="复制选中内容"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </button>
+
+          {/* 粘贴按钮 */}
+          <button
+            onClick={async () => {
+              try {
+                const text = await navigator.clipboard.readText();
+                if (text && xtermRef.current) {
+                  window.electronAPI.sendInput(session.id, text);
+                }
+              } catch { /* ignore */ }
+            }}
+            className="p-1.5 hover:bg-dark-700 rounded transition-colors"
+            title="粘贴剪贴板内容"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+          </button>
+
           {/* 注释按钮 */}
           <button
             onClick={() => setIsEditingNote(!isEditingNote)}
@@ -276,11 +319,40 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
       )}
 
       {/* 终端区域 */}
-      <div className="flex-1 p-4 overflow-hidden">
+      <div className="flex-1 p-4 overflow-hidden relative">
         <div
           ref={terminalRef}
           className="w-full h-full rounded border border-dark-700 terminal-container"
         />
+
+        {/* ESC 确认弹窗 */}
+        {showEscConfirm && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-dark-800 border border-dark-600 rounded-lg shadow-2xl p-4 z-50 min-w-[280px]">
+            <p className="text-sm text-dark-100 mb-3">检测到 ESC 键，是否发送到终端？</p>
+            <p className="text-xs text-dark-500 mb-3">ESC 可能中断当前 Claude Code 正在执行的任务</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setShowEscConfirm(false);
+                  if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
+                }}
+                className="flex-1 px-3 py-1.5 bg-dark-700 text-dark-200 rounded text-xs hover:bg-dark-600 transition-colors"
+              >
+                继续工作
+              </button>
+              <button
+                onClick={() => {
+                  window.electronAPI.sendInput(session.id, '\x1b');
+                  setShowEscConfirm(false);
+                  if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
+                }}
+                className="flex-1 px-3 py-1.5 bg-accent-danger text-white rounded text-xs hover:bg-red-500 transition-colors"
+              >
+                发送 ESC
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 底部状态栏 */}

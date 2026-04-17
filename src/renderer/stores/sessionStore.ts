@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { SessionStatus, AlertType, DisplayMode } from '../../shared/constants';
+import { SessionStatus, AlertType, AlertSeverity, AlertNotifyMode, DisplayMode } from '../../shared/constants';
 
 export interface Session {
   id: string;
@@ -22,6 +22,17 @@ export interface Alert {
   acknowledged: boolean;
 }
 
+export interface AlertRule {
+  type: AlertType;
+  enabled: boolean;
+  notifyMode: AlertNotifyMode;
+}
+
+export interface AlertConfig {
+  rules: AlertRule[];
+  silentMode: boolean;
+}
+
 export interface OutputChunk {
   sessionId: string;
   data: string;
@@ -36,6 +47,7 @@ interface SessionStore {
   sidebarVisible: boolean;
   alerts: Alert[];
   outputBuffers: Map<string, string[]>;
+  alertConfig: AlertConfig;
 
   // 操作
   setSessions: (sessions: Session[]) => void;
@@ -48,6 +60,10 @@ interface SessionStore {
   addAlert: (alert: Omit<Alert, 'id' | 'timestamp' | 'acknowledged'>) => void;
   acknowledgeAlert: (id: string) => void;
   clearAlerts: (sessionId?: string) => void;
+  clearAllAlerts: () => void;
+  setAlertSilentMode: (silent: boolean) => void;
+  updateAlertConfig: (config: Partial<AlertConfig>) => void;
+  updateAlertRule: (type: AlertType, updates: Partial<AlertRule>) => void;
   appendOutput: (sessionId: string, data: string) => void;
   clearOutput: (sessionId: string) => void;
 }
@@ -60,6 +76,15 @@ export const useSessionStore = create<SessionStore>((set) => ({
   sidebarVisible: true,
   alerts: [],
   outputBuffers: new Map(),
+  alertConfig: {
+    rules: [
+      { type: AlertType.ERROR, enabled: true, notifyMode: AlertNotifyMode.STRONG },
+      { type: AlertType.USER_INPUT, enabled: true, notifyMode: AlertNotifyMode.WEAK },
+      { type: AlertType.WARNING, enabled: true, notifyMode: AlertNotifyMode.WEAK },
+      { type: AlertType.TASK_COMPLETE, enabled: true, notifyMode: AlertNotifyMode.WEAK },
+    ],
+    silentMode: false,
+  },
 
   // 操作实现
   setSessions: (sessions) => set({ sessions }),
@@ -113,6 +138,25 @@ export const useSessionStore = create<SessionStore>((set) => ({
     alerts: sessionId
       ? state.alerts.filter((a) => a.sessionId !== sessionId)
       : [],
+  })),
+
+  clearAllAlerts: () => set({ alerts: [] }),
+
+  setAlertSilentMode: (silent) => set((state) => ({
+    alertConfig: { ...state.alertConfig, silentMode: silent },
+  })),
+
+  updateAlertConfig: (config) => set((state) => ({
+    alertConfig: { ...state.alertConfig, ...config },
+  })),
+
+  updateAlertRule: (type, updates) => set((state) => ({
+    alertConfig: {
+      ...state.alertConfig,
+      rules: state.alertConfig.rules.map((r) =>
+        r.type === type ? { ...r, ...updates } : r
+      ),
+    },
   })),
 
   appendOutput: (sessionId, data) => set((state) => {

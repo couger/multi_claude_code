@@ -72,6 +72,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners(channel);
   },
 
+  // 托盘事件
+  onTrayCreateSession: (callback: () => void) => {
+    ipcRenderer.on('tray:create-session', () => callback());
+  },
+
   // 标记 Electron 环境
   isElectron: true,
 

@@ -2,7 +2,7 @@
  * Claude Code CLI Manager - 主进程入口 (单文件打包版本)
  */
 
-import { app, BrowserWindow, ipcMain, dialog, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, screen, Tray, Menu, nativeImage } from 'electron';
 import path from 'path';
 import type { Server } from 'http';
 import type { Server as WebSocketServer, WebSocket } from 'ws';
@@ -25,6 +25,7 @@ let windowManager: WindowManager | null = null;
 let processManager: ProcessManager | null = null;
 let performanceMonitor: PerformanceMonitor | null = null;
 let groupManager: GroupManager | null = null;
+let tray: Tray | null = null;
 let isWindowHidden = false; // 窗口是否处于隐藏状态（收起状态）
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 let isManuallyHidden = false; // 手动一键隐藏标志
@@ -47,6 +48,7 @@ let httpServerEnabled = false; // Web 访问开关（默认关闭）
 let selectedServerIPs = new Set<string>(); // 用户选择的服务器IP（用于访问控制）
 let allowRemoteCreateSession = true; // 是否允许远程创建会话
 let maxRemoteConnections = 0; // 最大远程连接数（0 = 不限制）
+let minimizeToTrayOnClose = true; // 点击关闭按钮时最小化到托盘（默认开启）
 
 // WebSocket 客户端追踪
 interface WsClientInfo {
@@ -62,6 +64,176 @@ const RESTORE_SIZE = {
   width: 500,  // 滑出时窗口宽度
   height: 600, // 滑出时窗口高度
 };
+
+// 确保窗口在可见屏幕范围内
+function ensureWindowVisible() {
+  if (!mainWindow) return;
+  const bounds = mainWindow.getBounds();
+  const displays = screen.getAllDisplays();
+
+  // 检查窗口是否在任何可见屏幕范围内
+  let isVisible = false;
+  for (const display of displays) {
+    const { x, y, width, height } = display.workArea;
+    // 窗口至少有一部分在屏幕可见区域内
+    if (bounds.x + bounds.width > x && bounds.x < x + width &&
+        bounds.y + bounds.height > y && bounds.y < y + height &&
+        bounds.width > 50 && bounds.height > 50) {
+      isVisible = true;
+      break;
+    }
+  }
+
+  if (!isVisible) {
+    // 窗口不可见，重置到主屏幕中央
+    const primary = screen.getPrimaryDisplay();
+    const { width: sw, height: sh } = primary.workAreaSize;
+    const newWidth = 1200;
+    const newHeight = 800;
+    const newX = primary.workArea.x + Math.floor((sw - newWidth) / 2);
+    const newY = primary.workArea.y + Math.floor((sh - newHeight) / 2);
+
+    // 清除隐藏状态
+    isWindowHidden = false;
+    isManuallyHidden = false;
+    isWindowRestored = false;
+    mainWindow.setSkipTaskbar(false);
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setResizable(true);
+
+    mainWindow.setBounds({ x: newX, y: newY, width: newWidth, height: newHeight });
+    mainWindow.show();
+    mainWindow.focus();
+    console.log('Window was off-screen, repositioned to center');
+  }
+}
+
+// 创建托盘图标
+function createTray() {
+  // 创建一个简单的 16x16 托盘图标
+  const iconSize = 16;
+  const canvas = Buffer.alloc(iconSize * iconSize * 4);
+  // 绘制一个简单的圆形图标
+  for (let y = 0; y < iconSize; y++) {
+    for (let x = 0; x < iconSize; x++) {
+      const dx = x - 7.5;
+      const dy = y - 7.5;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const offset = (y * iconSize + x) * 4;
+      if (dist < 6.5) {
+        // 蓝色圆形 #58a6ff
+        canvas[offset] = 0x58;
+        canvas[offset + 1] = 0xa6;
+        canvas[offset + 2] = 0xff;
+        canvas[offset + 3] = 255;
+      } else if (dist < 7.5) {
+        // 边缘渐变
+        const alpha = Math.floor(255 * (7.5 - dist));
+        canvas[offset] = 0x58;
+        canvas[offset + 1] = 0xa6;
+        canvas[offset + 2] = 0xff;
+        canvas[offset + 3] = alpha;
+      }
+    }
+  }
+  const icon = nativeImage.createFromBuffer(canvas, { width: iconSize, height: iconSize });
+
+  tray = new Tray(icon);
+  tray.setToolTip('Claude Code CLI Manager');
+
+  updateTrayMenu();
+
+  // 左键点击切换窗口可见性
+  tray.on('click', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+      // 窗口可见时：如果隐藏状态则恢复，否则最小化到托盘
+      if (isWindowHidden) {
+        restoreWindow();
+        mainWindow.focus();
+      } else {
+        mainWindow.hide();
+      }
+    } else {
+      // 窗口不可见时：恢复并显示
+      ensureWindowVisible();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
+  // 右键点击显示上下文菜单
+  tray.on('right-click', () => {
+    updateTrayMenu();
+  });
+}
+
+// 更新托盘菜单
+function updateTrayMenu() {
+  if (!tray) return;
+
+  const runningCount = processManager
+    ? Array.from((processManager as any).sessions.values())
+        .filter((s: any) => s.status === SessionStatus.RUNNING).length
+    : 0;
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: '显示主窗口',
+      click: () => {
+        if (!mainWindow) return;
+        ensureWindowVisible();
+        if (isWindowHidden) restoreWindow();
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: `运行中会话: ${runningCount}`,
+      enabled: false,
+    },
+    { type: 'separator' },
+    {
+      label: '新建会话',
+      click: () => {
+        if (!mainWindow) return;
+        ensureWindowVisible();
+        mainWindow.show();
+        mainWindow.focus();
+        mainWindow.webContents.send('tray:create-session');
+      },
+    },
+    {
+      label: '一键贴边隐藏',
+      click: () => {
+        if (!mainWindow) return;
+        const displays = screen.getAllDisplays();
+        const cursorPos = screen.getCursorScreenPoint();
+        let targetDisplay = displays[0];
+        for (const display of displays) {
+          const { x, y, width, height } = display.bounds;
+          if (cursorPos.x >= x && cursorPos.x < x + width &&
+              cursorPos.y >= y && cursorPos.y < y + height) {
+            targetDisplay = display;
+            break;
+          }
+        }
+        hideWindowToEdge(targetDisplay, 'right');
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(contextMenu);
+}
 
 // 将窗口隐藏到屏幕边缘
 function hideWindowToEdge(targetDisplay: any, direction: string) {
@@ -252,8 +424,25 @@ function createWindow() {
     mainWindow = null;
   });
 
+  // 启动后检查窗口是否在可见区域内
+  mainWindow.once('ready-to-show', () => {
+    ensureWindowVisible();
+  });
+
+  // 创建系统托盘
+  if (!tray) {
+    createTray();
+  }
+
   // 主窗口关闭前确认（有运行中会话时弹出确认框）
   mainWindow.on('close', (e: any) => {
+    // 如果设置最小化到托盘，则隐藏窗口而不是退出
+    if (minimizeToTrayOnClose) {
+      e.preventDefault();
+      mainWindow?.hide();
+      return;
+    }
+
     if (!processManager) return;
     const runningCount = Array.from((processManager as any).sessions.values())
       .filter((s: any) => s.status === SessionStatus.RUNNING).length;
@@ -269,6 +458,8 @@ function createWindow() {
       });
       if (choice === 0) {
         e.preventDefault();
+      } else {
+        if (tray) { tray.destroy(); tray = null; }
       }
     }
   });
@@ -667,6 +858,10 @@ function initIPC() {
     }
     if (settings.maxRemoteConnections !== undefined) {
       maxRemoteConnections = settings.maxRemoteConnections;
+    }
+    // 更新关闭按钮行为
+    if (settings.minimizeToTrayOnClose !== undefined) {
+      minimizeToTrayOnClose = settings.minimizeToTrayOnClose;
     }
     // 更新隐藏方向
     if (settings.hideDirection !== undefined && (settings.hideDirection === 'left' || settings.hideDirection === 'right')) {
@@ -1531,12 +1726,14 @@ if (!gotTheLock) {
   app.on('second-instance', () => {
     // 用户尝试启动第二个实例时，聚焦到已有窗口
     if (mainWindow) {
+      ensureWindowVisible();
       if (isWindowHidden) {
         restoreWindow();
       }
       if (mainWindow.isMinimized()) {
         mainWindow.restore();
       }
+      mainWindow.show();
       mainWindow.focus();
     }
   });
@@ -1596,6 +1793,10 @@ process.on('unhandledRejection', (reason, _promise) => {
 
 app.on('before-quit', () => {
   stopHttpServer(true); // 优雅关闭
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
 });
 
 app.on('window-all-closed', () => {

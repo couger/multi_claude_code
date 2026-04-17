@@ -129,6 +129,11 @@ const App: React.FC = () => {
       });
     });
 
+    // 监听托盘新建会话事件
+    window.electronAPI.onTrayCreateSession?.(() => {
+      setShowCreateDialog(true);
+    });
+
     return () => {
       window.electronAPI.removeAllListeners('session:created');
       window.electronAPI.removeAllListeners('session:outputChunk');

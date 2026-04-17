@@ -4,12 +4,12 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Session } from '../stores/sessionStore';
-import { DisplayMode } from '../../shared/constants';
+import { Session, useSessionStore } from '../stores/sessionStore';
+import { DisplayMode, AlertType, AlertNotifyMode, AlertSeverity } from '../../shared/constants';
 
 // ======================== 类型定义 ========================
 
-type TabKey = 'general' | 'groups' | 'performance' | 'remote' | 'ai';
+type TabKey = 'general' | 'groups' | 'performance' | 'remote' | 'alerts' | 'ai';
 
 // AI配置接口
 interface AIConfig {
@@ -42,6 +42,7 @@ interface GeneralSettings {
   allowRemoteCreateSession?: boolean;
   terminalFontSize?: number;
   hideDirection?: 'left' | 'right';
+  minimizeToTrayOnClose?: boolean;
 }
 
 const GeneralTab: React.FC<{
@@ -250,6 +251,220 @@ const GeneralTab: React.FC<{
           </button>
         </div>
         <div className="text-xs text-dark-500">选择窗口隐藏到屏幕的哪一侧（适应扩展桌面布局）</div>
+      </div>
+
+      {/* 关闭按钮行为 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">点击关闭按钮时</label>
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              const newSettings: GeneralSettings = { ...settings, minimizeToTrayOnClose: true };
+              onSettingsChange(newSettings);
+              window.electronAPI?.broadcastGeneralSettings?.(newSettings);
+            }}
+            className={`flex-1 py-2 rounded text-xs transition-colors ${
+              settings.minimizeToTrayOnClose !== false
+                ? 'bg-accent-primary text-dark-900'
+                : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
+            }`}
+          >
+            最小化到托盘
+          </button>
+          <button
+            onClick={() => {
+              const newSettings: GeneralSettings = { ...settings, minimizeToTrayOnClose: false };
+              onSettingsChange(newSettings);
+              window.electronAPI?.broadcastGeneralSettings?.(newSettings);
+            }}
+            className={`flex-1 py-2 rounded text-xs transition-colors ${
+              settings.minimizeToTrayOnClose === false
+                ? 'bg-accent-primary text-dark-900'
+                : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
+            }`}
+          >
+            直接退出程序
+          </button>
+        </div>
+        <div className="text-xs text-dark-500">选择点击窗口标题栏关闭按钮时的行为</div>
+      </div>
+    </div>
+  );
+};
+
+// ======================== 子组件：告警及日志 ========================
+
+const ALERT_TYPE_INFO: Record<string, { label: string; description: string; severity: AlertSeverity }> = {
+  [AlertType.ERROR]: { label: '错误', description: '会话执行出错、崩溃、异常退出', severity: AlertSeverity.ERROR },
+  [AlertType.WARNING]: { label: '警告', description: '资源占用高、网络延迟、配置异常', severity: AlertSeverity.WARNING },
+  [AlertType.USER_INPUT]: { label: '等待输入', description: 'Claude Code 需要用户确认或输入', severity: AlertSeverity.WARNING },
+  [AlertType.TASK_COMPLETE]: { label: '任务完成', description: '会话任务执行完毕', severity: AlertSeverity.INFO },
+};
+
+const SEVERITY_LABELS: Record<AlertSeverity, { label: string; color: string }> = {
+  [AlertSeverity.CRITICAL]: { label: '严重', color: 'text-red-400' },
+  [AlertSeverity.ERROR]: { label: '错误', color: 'text-red-400' },
+  [AlertSeverity.WARNING]: { label: '警告', color: 'text-yellow-400' },
+  [AlertSeverity.INFO]: { label: '信息', color: 'text-blue-400' },
+};
+
+const NOTIFY_MODE_LABELS: Record<AlertNotifyMode, { label: string; desc: string }> = {
+  [AlertNotifyMode.NONE]: { label: '不提醒', desc: '不显示任何提醒' },
+  [AlertNotifyMode.WEAK]: { label: '弱提醒', desc: '气泡通知' },
+  [AlertNotifyMode.STRONG]: { label: '强提醒', desc: '弹窗 + 声音' },
+};
+
+const AlertsTab: React.FC = () => {
+  const alertConfig = useSessionStore((state) => state.alertConfig);
+  const updateAlertRule = useSessionStore((state) => state.updateAlertRule);
+  const updateAlertConfig = useSessionStore((state) => state.updateAlertConfig);
+  const alerts = useSessionStore((state) => state.alerts);
+  const clearAllAlerts = useSessionStore((state) => state.clearAllAlerts);
+
+  const unackCount = alerts.filter(a => !a.acknowledged).length;
+
+  // 保存配置到 localStorage
+  useEffect(() => {
+    localStorage.setItem('alertConfig', JSON.stringify(alertConfig));
+  }, [alertConfig]);
+
+  return (
+    <div className="space-y-5">
+      {/* 告警统计 */}
+      <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
+        <div>
+          <div className="text-sm text-dark-200 font-medium">当前告警状态</div>
+          <div className="text-xs text-dark-500">未确认告警: {unackCount} 个</div>
+        </div>
+        <button
+          onClick={clearAllAlerts}
+          disabled={unackCount === 0}
+          className="text-xs px-3 py-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          清除全部
+        </button>
+      </div>
+
+      {/* 静默模式 */}
+      <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
+        <div>
+          <div className="text-sm text-dark-200 font-medium">静默模式</div>
+          <div className="text-xs text-dark-500">开启后仅显示数字角标，不显示告警气泡</div>
+        </div>
+        <button
+          onClick={() => updateAlertConfig({ silentMode: !alertConfig.silentMode })}
+          className={`relative w-10 h-5 rounded-full transition-colors ${
+            alertConfig.silentMode ? 'bg-accent-primary' : 'bg-dark-600'
+          }`}
+        >
+          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+            alertConfig.silentMode ? 'left-5' : 'left-0.5'
+          }`} />
+        </button>
+      </div>
+
+      {/* 告警分级与过滤 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">告警分级与过滤</label>
+        <div className="text-xs text-dark-500 mb-2">选择需要接收的告警类型，并配置提醒方式</div>
+        <div className="space-y-2">
+          {alertConfig.rules.map((rule) => {
+            const info = ALERT_TYPE_INFO[rule.type];
+            if (!info) return null;
+            const severityInfo = SEVERITY_LABELS[info.severity];
+            return (
+              <div key={rule.type} className="border border-dark-600 rounded-lg overflow-hidden">
+                <div className="flex items-center gap-3 p-3">
+                  {/* 启用开关 */}
+                  <button
+                    onClick={() => updateAlertRule(rule.type as AlertType, { enabled: !rule.enabled })}
+                    className={`relative w-8 h-4 rounded-full transition-colors flex-shrink-0 ${
+                      rule.enabled ? 'bg-accent-primary' : 'bg-dark-600'
+                    }`}
+                  >
+                    <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                      rule.enabled ? 'left-4' : 'left-0.5'
+                    }`} />
+                  </button>
+
+                  {/* 告警信息 */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-dark-200">{info.label}</span>
+                      <span className={`text-xs ${severityInfo.color}`}>[{severityInfo.label}]</span>
+                    </div>
+                    <div className="text-xs text-dark-500">{info.description}</div>
+                  </div>
+
+                  {/* 提醒方式选择 */}
+                  <div className="flex gap-1 flex-shrink-0">
+                    {(Object.values(AlertNotifyMode) as AlertNotifyMode[]).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => updateAlertRule(rule.type as AlertType, { notifyMode: mode })}
+                        className={`text-xs px-2 py-1 rounded transition-colors ${
+                          rule.notifyMode === mode
+                            ? 'bg-accent-primary text-dark-900'
+                            : 'bg-dark-700 text-dark-400 hover:bg-dark-600'
+                        }`}
+                        title={NOTIFY_MODE_LABELS[mode].desc}
+                      >
+                        {NOTIFY_MODE_LABELS[mode].label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 告警方式说明 */}
+      <div className="text-xs text-dark-500 p-3 bg-dark-900 rounded">
+        <p className="mb-1.5 font-medium text-dark-400">提醒方式说明：</p>
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-dark-300 w-16">不提醒</span>
+            <span>完全忽略该类型告警</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-dark-300 w-16">弱提醒</span>
+            <span>右下角气泡通知，可手动关闭</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-dark-300 w-16">强提醒</span>
+            <span>弹出通知 + 声音提示，适合重要告警</span>
+          </div>
+        </div>
+      </div>
+
+      {/* 最近告警历史 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">最近告警记录</label>
+        {alerts.length === 0 ? (
+          <div className="text-xs text-dark-500 text-center py-4 bg-dark-900 rounded">暂无告警记录</div>
+        ) : (
+          <div className="max-h-40 overflow-y-auto space-y-1">
+            {alerts.slice(-20).reverse().map((alert) => {
+              const info = ALERT_TYPE_INFO[alert.type];
+              return (
+                <div
+                  key={alert.id}
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${
+                    alert.acknowledged ? 'bg-dark-900 text-dark-500' : 'bg-dark-800 text-dark-300'
+                  }`}
+                >
+                  <span className={alert.acknowledged ? 'opacity-50' : ''}>{info?.label || alert.type}</span>
+                  <span className="flex-1 truncate">{alert.message}</span>
+                  <span className="text-dark-600 flex-shrink-0">
+                    {new Date(alert.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1374,6 +1589,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     if (window.electronAPI) {
       tabs.push({ key: 'remote' as TabKey, label: '网络', icon: '🌐' });
     }
+    // 添加告警及日志标签页
+    tabs.push({ key: 'alerts' as TabKey, label: '告警', icon: '🔔' });
     // 添加 AI 标签页（始终显示）
     tabs.push({ key: 'ai' as TabKey, label: '助手AI', icon: '🤖' });
     return tabs;
@@ -1432,6 +1649,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           )}
           {activeTab === 'remote' && window.electronAPI && (
             <_RemoteTab visible={visible && activeTab === 'remote'} />
+          )}
+          {activeTab === 'alerts' && (
+            <AlertsTab />
           )}
           {activeTab === 'ai' && (
             <AITab />

@@ -24,6 +24,35 @@ export enum AlertType {
 }
 
 /**
+ * 告警严重级别
+ */
+export enum AlertSeverity {
+  CRITICAL = 'critical',
+  ERROR = 'error',
+  WARNING = 'warning',
+  INFO = 'info',
+}
+
+/**
+ * 告警通知方式
+ */
+export enum AlertNotifyMode {
+  NONE = 'none',
+  WEAK = 'weak',
+  STRONG = 'strong',
+}
+
+/**
+ * 告警类型到严重级别的默认映射
+ */
+export const ALERT_SEVERITY_MAP: Record<AlertType, AlertSeverity> = {
+  [AlertType.ERROR]: AlertSeverity.ERROR,
+  [AlertType.USER_INPUT]: AlertSeverity.WARNING,
+  [AlertType.WARNING]: AlertSeverity.WARNING,
+  [AlertType.TASK_COMPLETE]: AlertSeverity.INFO,
+};
+
+/**
  * 显示模式
  */
 export enum DisplayMode {
