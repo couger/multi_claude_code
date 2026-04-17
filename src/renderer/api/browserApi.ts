@@ -39,6 +39,17 @@ class BrowserAPI {
     // 保存 token 到 cookie（7天有效）
     document.cookie = `cccm_token=${this.token}; max-age=${7 * 24 * 3600}; path=/`;
 
+    // 检查是否远程创建会话被禁用
+    try {
+      const saved = localStorage.getItem('generalSettings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.allowRemoteCreateSession === false) {
+          document.body.setAttribute('data-remote-create-disabled', 'true');
+        }
+      }
+    } catch { /* ignore */ }
+
     // 连接 WebSocket
     this.connectWs();
   }
@@ -74,6 +85,25 @@ class BrowserAPI {
                 pending.resolve(msg.data);
               }
             }
+          } else if (msg.channel === 'remote-access-closed') {
+            // 远程访问被关闭 - 显示提示然后断开
+            this.showRemoteAccessClosed(msg.data?.reason || '远程访问已关闭');
+          } else if (msg.channel === 'connection-rejected') {
+            // 连接被拒绝（连接数上限等）
+            this.showRemoteAccessClosed(msg.data?.reason || '连接被拒绝');
+          } else if (msg.channel === 'settings:general') {
+            // 接收通用设置更新
+            if (msg.data) {
+              try {
+                localStorage.setItem('generalSettings', JSON.stringify(msg.data));
+                // 如果远程创建会话被禁用，隐藏创建按钮
+                if (msg.data.allowRemoteCreateSession === false) {
+                  document.body.setAttribute('data-remote-create-disabled', 'true');
+                } else {
+                  document.body.removeAttribute('data-remote-create-disabled');
+                }
+              } catch { /* ignore */ }
+            }
           } else {
             // 处理事件推送
             const callbacks = this.listeners.get(msg.channel);
@@ -90,20 +120,29 @@ class BrowserAPI {
 
       this.ws.onclose = (event) => {
         console.log(`[BrowserAPI] WebSocket disconnected: code=${event.code}, reason=${event.reason}`);
-        // 如果是被踢出（4002）、未授权（4001）或令牌刷新（4003），则重定向到登录页面
-        if (event.code === 4001 || event.code === 4002 || event.code === 4003) {
-          console.log(`[BrowserAPI] 连接被关闭，需要重新登录，重定向到登录页面`);
-          // 清除重连定时器
-          if (this.wsReconnectTimer) {
-            clearTimeout(this.wsReconnectTimer);
-            this.wsReconnectTimer = null;
-          }
-          // 重定向到登录页面
-          window.location.href = '/login.html';
+        // 清除重连定时器
+        if (this.wsReconnectTimer) {
+          clearTimeout(this.wsReconnectTimer);
+          this.wsReconnectTimer = null;
+        }
+        // 清除 cookie，强制重新登录
+        document.cookie = 'cccm_token=; max-age=0; path=/';
+
+        // 如果是连接数上限（4005），显示提示
+        if (event.code === 4005) {
+          const overlay = document.createElement('div');
+          overlay.style.cssText = 'position:fixed;inset:0;background:#0d1117;display:flex;align-items:center;justify-content:center;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+          overlay.innerHTML = `<div style="text-align:center;color:#c9d1d9;">
+            <div style="font-size:48px;margin-bottom:16px;">🔒</div>
+            <h2 style="font-size:20px;color:#d29922;margin-bottom:8px;">连接数已达上限</h2>
+            <p style="font-size:14px;color:#8b949e;">${event.reason || '请稍后再试'}</p>
+          </div>`;
+          document.body.appendChild(overlay);
           return;
         }
-        // 其他情况（如网络错误）3秒后重连
-        this.wsReconnectTimer = setTimeout(() => this.connectWs(), 3000);
+        // 任何原因断开都需要重新登录
+        console.log(`[BrowserAPI] 连接被关闭，重定向到登录页面`);
+        window.location.href = '/login.html';
       };
 
       this.ws.onerror = () => {
@@ -296,6 +335,52 @@ class BrowserAPI {
       this.listeners.set(channel, new Set());
     }
     this.listeners.get(channel)!.add(callback);
+  }
+
+  /**
+   * 显示远程访问已关闭的提示页面
+   */
+  private showRemoteAccessClosed(reason: string) {
+    // 创建全屏覆盖层
+    const overlay = document.createElement('div');
+    overlay.id = 'remote-access-closed-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:#0d1117;display:flex;align-items:center;justify-content:center;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+    overlay.innerHTML = `
+      <div style="text-align:center;color:#c9d1d9;">
+        <div style="font-size:48px;margin-bottom:16px;">🔒</div>
+        <h2 style="font-size:20px;color:#f85149;margin-bottom:8px;">远程访问已关闭</h2>
+        <p style="font-size:14px;color:#8b949e;margin-bottom:24px;">${reason}</p>
+        <p style="font-size:12px;color:#6e7681;">此页面将自动关闭...</p>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // 延迟后尝试刷新，如果服务器已关闭则显示浏览器错误
+    setTimeout(() => {
+      // 关闭WebSocket连接
+      if (this.ws) {
+        this.ws.close();
+      }
+      // 尝试重新连接检测服务器状态
+      setTimeout(() => {
+        fetch(window.location.href, { method: 'HEAD' })
+          .then(() => {
+            // 服务器仍在运行，可能是重新启动了
+            window.location.reload();
+          })
+          .catch(() => {
+            // 服务器已关闭，显示断开信息
+            overlay.innerHTML = `
+              <div style="text-align:center;color:#c9d1d9;">
+                <div style="font-size:48px;margin-bottom:16px;">⚠️</div>
+                <h2 style="font-size:20px;color:#f85149;margin-bottom:8px;">连接已断开</h2>
+                <p style="font-size:14px;color:#8b949e;">远程访问服务已关闭</p>
+                <p style="font-size:12px;color:#6e7681;margin-top:16px;">请刷新页面重试，或联系管理员</p>
+              </div>
+            `;
+          });
+      }, 1000);
+    }, 2000);
   }
 }
 

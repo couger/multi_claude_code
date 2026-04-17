@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { Session } from '../stores/sessionStore';
 import { SessionStatus, DisplayMode } from '../../shared/constants';
 import { useSessionStore } from '../stores/sessionStore';
@@ -10,9 +10,6 @@ const PRESET_ARGS_COLORS: Record<string, string> = {
   '--allow-all': '#f85149', // 红色
   '--skip-approval': '#58a6ff', // 蓝色
 };
-
-// 预设参数列表（用于快速识别）
-const PRESET_ARGS = Object.keys(PRESET_ARGS_COLORS);
 
 // 根据参数字符串生成稳定的颜色
 const generateArgColor = (arg: string): string => {

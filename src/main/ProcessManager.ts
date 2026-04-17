@@ -29,6 +29,47 @@ class ProcessManager {
   }
 
   /**
+   * 检查工作目录是否与现有会话冲突
+   * 返回冲突的会话列表
+   */
+  checkWorkDirConflict(workDir: string): Array<{ sessionId: string; sessionName: string; workDir: string; conflictType: string }> {
+    const conflicts: Array<{ sessionId: string; sessionName: string; workDir: string; conflictType: string }> = [];
+    const normalizedNew = path.resolve(workDir).toLowerCase();
+
+    for (const [id, session] of this.sessions) {
+      if (session.status === SessionStatus.COMPLETED || session.status === SessionStatus.ERROR) continue;
+
+      const normalizedExisting = path.resolve(session.workDir).toLowerCase();
+
+      // 检查是否是相同路径或父子关系
+      if (normalizedNew === normalizedExisting) {
+        conflicts.push({
+          sessionId: id,
+          sessionName: session.name,
+          workDir: session.workDir,
+          conflictType: 'same',
+        });
+      } else if (normalizedNew.startsWith(normalizedExisting + path.sep)) {
+        conflicts.push({
+          sessionId: id,
+          sessionName: session.name,
+          workDir: session.workDir,
+          conflictType: 'child',
+        });
+      } else if (normalizedExisting.startsWith(normalizedNew + path.sep)) {
+        conflicts.push({
+          sessionId: id,
+          sessionName: session.name,
+          workDir: session.workDir,
+          conflictType: 'parent',
+        });
+      }
+    }
+
+    return conflicts;
+  }
+
+  /**
    * 创建新的 CLI 会话
    */
   async createSession(options: any = {}) {

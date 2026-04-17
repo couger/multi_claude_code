@@ -11,6 +11,9 @@ import { SessionStatus } from '../shared/constants';
 interface GeneralSettings {
   showGroupPanel: boolean;
   showPerformancePanel: boolean;
+  defaultBrowseDir?: string;
+  allowRemoteCreateSession?: boolean;
+  terminalFontSize?: number;
 }
 
 const App: React.FC = () => {
@@ -44,6 +47,42 @@ const App: React.FC = () => {
   // 保存通用设置
   useEffect(() => {
     localStorage.setItem('generalSettings', JSON.stringify(generalSettings));
+    // 广播设置到远程Web客户端
+    try {
+      window.electronAPI?.broadcastGeneralSettings?.(generalSettings);
+    } catch { /* ignore */ }
+  }, [generalSettings]);
+
+  // 监听远程推送的通用设置更新（浏览器环境）
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'generalSettings' && e.newValue) {
+        try {
+          const newSettings = JSON.parse(e.newValue);
+          setGeneralSettings(newSettings);
+        } catch { /* ignore */ }
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    // 定期检查（storage事件在同一个页面不触发）
+    const interval = setInterval(() => {
+      const saved = localStorage.getItem('generalSettings');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed.showGroupPanel !== generalSettings.showGroupPanel ||
+              parsed.showPerformancePanel !== generalSettings.showPerformancePanel) {
+            setGeneralSettings(parsed);
+          }
+        } catch { /* ignore */ }
+      }
+    }, 2000);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
   }, [generalSettings]);
 
   // 初始化 IPC 监听
@@ -177,6 +216,7 @@ const App: React.FC = () => {
             session={expandedSession}
             onClose={handleCloseSession}
             onCollapse={handleCollapseSession}
+            terminalFontSize={generalSettings.terminalFontSize}
           />
         )}
 

@@ -38,6 +38,10 @@ interface SettingsPanelProps {
 interface GeneralSettings {
   showGroupPanel: boolean;
   showPerformancePanel: boolean;
+  defaultBrowseDir?: string;
+  allowRemoteCreateSession?: boolean;
+  terminalFontSize?: number;
+  hideDirection?: 'left' | 'right';
 }
 
 const GeneralTab: React.FC<{
@@ -45,9 +49,35 @@ const GeneralTab: React.FC<{
   onDisplayModeChange: (mode: DisplayMode) => void;
   settings: GeneralSettings;
   onSettingsChange: (settings: GeneralSettings) => void;
-}> = ({ displayMode, onDisplayModeChange, settings, onSettingsChange }) => {
+}> = ({ displayMode: _displayMode, onDisplayModeChange: _onDisplayModeChange, settings, onSettingsChange }) => {
   const toggleSetting = (key: keyof GeneralSettings) => {
     onSettingsChange({ ...settings, [key]: !settings[key] });
+  };
+
+  // 选择默认浏览目录
+  const handleSelectDefaultBrowseDir = async () => {
+    try {
+      const selected = await window.electronAPI.selectWorkDir();
+      if (selected) {
+        const newSettings = { ...settings, defaultBrowseDir: selected };
+        onSettingsChange(newSettings);
+        // 通过 IPC 广播到主进程（主进程会写入 config.json）
+        try {
+          window.electronAPI?.broadcastGeneralSettings?.(newSettings);
+        } catch { /* ignore */ }
+      }
+    } catch (e) {
+      console.error('选择默认浏览目录失败:', e);
+    }
+  };
+
+  const handleClearDefaultBrowseDir = () => {
+    const newSettings = { ...settings, defaultBrowseDir: undefined };
+    onSettingsChange(newSettings);
+    // 通过 IPC 广播到主进程
+    try {
+      window.electronAPI?.broadcastGeneralSettings?.(newSettings);
+    } catch { /* ignore */ }
   };
 
   return (
@@ -97,6 +127,130 @@ const GeneralTab: React.FC<{
           </div>
         </div>
       </div>
+
+      {/* 新建会话默认浏览目录 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">新建会话 - 浏览目录起始位置</label>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={settings.defaultBrowseDir || ''}
+              readOnly
+              placeholder="用户主目录（默认）"
+              className="flex-1 px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 font-mono"
+            />
+            <button
+              onClick={handleSelectDefaultBrowseDir}
+              className="px-3 py-1.5 bg-dark-700 text-dark-300 rounded text-xs hover:bg-dark-600 transition-colors shrink-0"
+            >
+              浏览...
+            </button>
+            {settings.defaultBrowseDir && (
+              <button
+                onClick={handleClearDefaultBrowseDir}
+                className="px-2 py-1.5 text-dark-500 hover:text-dark-300 transition-colors shrink-0"
+                title="重置为默认"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <div className="text-xs text-dark-500">
+            设置点击"浏览"按钮时打开的起始目录，方便快速定位常用项目目录
+          </div>
+        </div>
+      </div>
+
+      {/* 远程访问控制 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">远程访问控制</label>
+        <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
+          <div className="flex items-center gap-2">
+            <svg className="w-3.5 h-3.5 text-dark-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            <div>
+              <div className="text-xs text-dark-200">允许远程创建会话</div>
+              <div className="text-xs text-dark-500">关闭后远程Web界面无法创建新会话</div>
+            </div>
+          </div>
+          <button
+            onClick={() => onSettingsChange({ ...settings, allowRemoteCreateSession: !settings.allowRemoteCreateSession })}
+            className={`relative w-10 h-5 rounded-full transition-colors ${
+              settings.allowRemoteCreateSession !== false ? 'bg-accent-primary' : 'bg-dark-600'
+            }`}
+          >
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+              settings.allowRemoteCreateSession !== false ? 'left-5' : 'left-0.5'
+            }`} />
+          </button>
+        </div>
+      </div>
+
+      {/* 终端字体大小 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">会话终端字体大小</label>
+        <div className="flex items-center gap-3 p-2 bg-dark-900 rounded">
+          <span className="text-xs text-dark-400">小</span>
+          <input
+            type="range"
+            min="10"
+            max="20"
+            step="1"
+            value={settings.terminalFontSize || 14}
+            onChange={(e) => onSettingsChange({ ...settings, terminalFontSize: parseInt(e.target.value) })}
+            className="flex-1 accent-accent-primary"
+          />
+          <span className="text-xs text-dark-400">大</span>
+          <span className="text-xs text-dark-200 font-mono w-6 text-center">{settings.terminalFontSize || 14}px</span>
+        </div>
+        <div className="text-xs text-dark-500">仅影响展开后的会话终端窗口（默认14px）</div>
+      </div>
+
+      {/* 一键贴边隐藏方向 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">一键贴边隐藏方向</label>
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              const newSettings: GeneralSettings = { ...settings, hideDirection: 'left' };
+              onSettingsChange(newSettings);
+              window.electronAPI?.broadcastGeneralSettings?.(newSettings);
+            }}
+            className={`flex-1 py-2 rounded text-xs transition-colors flex items-center justify-center gap-2 ${
+              (settings.hideDirection || 'right') === 'left'
+                ? 'bg-accent-primary text-dark-900'
+                : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+            </svg>
+            左侧
+          </button>
+          <button
+            onClick={() => {
+              const newSettings: GeneralSettings = { ...settings, hideDirection: 'right' };
+              onSettingsChange(newSettings);
+              window.electronAPI?.broadcastGeneralSettings?.(newSettings);
+            }}
+            className={`flex-1 py-2 rounded text-xs transition-colors flex items-center justify-center gap-2 ${
+              (settings.hideDirection || 'right') === 'right'
+                ? 'bg-accent-primary text-dark-900'
+                : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
+            }`}
+          >
+            右侧
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+        <div className="text-xs text-dark-500">选择窗口隐藏到屏幕的哪一侧（适应扩展桌面布局）</div>
+      </div>
     </div>
   );
 };
@@ -120,12 +274,15 @@ const AITab: React.FC = () => {
   const [showApiKey, setShowApiKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
-  
-  // 提示词相关状态
-  const [promptFiles, setPromptFiles] = useState<string[]>([]);
-  const [selectedPromptFile, setSelectedPromptFile] = useState<string>('');
+
+  // 提示词相关状态（暂未实现）
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_promptFiles, _setPromptFiles] = useState<string[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_selectedPromptFile, _setSelectedPromptFile] = useState<string>('');
   const [promptContent, setPromptContent] = useState<string>('');
-  const [loadingPromptFiles, setLoadingPromptFiles] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_loadingPromptFiles, _setLoadingPromptFiles] = useState(false);
 
   // 保存配置
   useEffect(() => {
@@ -344,19 +501,13 @@ const AITab: React.FC = () => {
           <label className="text-xs text-dark-400">默认提示词</label>
           <button
             onClick={handleLoadPromptFromFile}
-            disabled={loadingPromptFiles}
+            disabled={false}
             className="text-xs py-1 px-2 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors disabled:opacity-50"
           >
-            {loadingPromptFiles ? '加载中...' : '从文件选择'}
+            从文件选择
           </button>
         </div>
-        
-        {selectedPromptFile && (
-          <div className="text-xs text-dark-500">
-            已选择文件: <span className="text-dark-300 font-mono">{selectedPromptFile}</span>
-          </div>
-        )}
-        
+
         <div className="space-y-2">
           <label className="text-xs text-dark-400">提示词内容预览</label>
           <div className="relative">
@@ -792,6 +943,17 @@ const _RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
     const saved = localStorage.getItem('remoteSelectedIPs');
     return saved ? new Set(JSON.parse(saved)) : new Set();
   });
+  const [maxConnInput, setMaxConnInput] = useState<string>(() => {
+    const saved = localStorage.getItem('generalSettings');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return String(parsed.maxRemoteConnections ?? 0);
+      } catch { /* ignore */ }
+    }
+    return '0';
+  });
+  const [maxConnError, setMaxConnError] = useState('');
   const refreshTimer = useRef<NodeJS.Timeout | null>(null);
 
   // 保存选中的 IP 地址到 localStorage
@@ -878,6 +1040,27 @@ const _RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
     setLoading(false);
   }, [fetchStatus]);
 
+  // 设置最大连接数
+  const handleMaxConnChange = useCallback(async () => {
+    const val = parseInt(maxConnInput, 10);
+    if (isNaN(val) || val < 0 || val > 100) {
+      setMaxConnError('请输入 0-100 之间的数字（0 表示不限制）');
+      return;
+    }
+    // 保存到 localStorage 并广播
+    try {
+      const saved = localStorage.getItem('generalSettings');
+      const settings = saved ? JSON.parse(saved) : {};
+      settings.maxRemoteConnections = val;
+      localStorage.setItem('generalSettings', JSON.stringify(settings));
+      // 广播到主进程
+      window.electronAPI?.broadcastGeneralSettings?.(settings);
+      setMaxConnError('');
+    } catch {
+      setMaxConnError('保存失败');
+    }
+  }, [maxConnInput]);
+
   const handleCopyToken = useCallback(async () => {
     if (!status?.token) return;
     try { await navigator.clipboard.writeText(status.token); } catch {
@@ -915,14 +1098,22 @@ const _RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
       } else {
         newSet.add(ip);
       }
-      
-      // 异步更新服务器的IP白名单
+
+      // 同步选中的IP到主进程（用于服务器端访问控制）
+      const ipsArray = [...newSet];
+      if (window.electronAPI?.setSelectedIPs) {
+        window.electronAPI.setSelectedIPs(ipsArray).catch(err => {
+          console.error('Failed to sync selected IPs:', err);
+        });
+      }
+
+      // 兼容：异步更新服务器的IP白名单
       if (status?.running && status?.port) {
         const apiUrl = `http://localhost:${status.port}/api/${isAdding ? 'allow-ip' : 'remove-ip'}`;
         const method = isAdding ? 'POST' : 'DELETE';
         const body = isAdding ? JSON.stringify({ ip }) : undefined;
         const query = !isAdding ? `?ip=${encodeURIComponent(ip)}` : '';
-        
+
         fetch(apiUrl + query, {
           method,
           headers: isAdding ? { 'Content-Type': 'application/json' } : undefined,
@@ -931,7 +1122,7 @@ const _RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
           console.error(`Failed to update IP whitelist for ${ip}:`, err);
         });
       }
-      
+
       return newSet;
     });
   }, [status?.running, status?.port]);
@@ -939,12 +1130,19 @@ const _RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
   // 选择所有IP
   const handleSelectAllIPs = useCallback(() => {
     if (!status?.localIPs) return;
-    setSelectedIPs(new Set(status.localIPs));
+    const allIPs = new Set(status.localIPs);
+    setSelectedIPs(allIPs);
+    if (window.electronAPI?.setSelectedIPs) {
+      window.electronAPI.setSelectedIPs([...allIPs]).catch(console.error);
+    }
   }, [status?.localIPs]);
 
   // 清空所有IP选择
   const handleClearAllIPs = useCallback(() => {
     setSelectedIPs(new Set());
+    if (window.electronAPI?.setSelectedIPs) {
+      window.electronAPI.setSelectedIPs([]).catch(console.error);
+    }
   }, []);
 
   // 获取要显示的IP地址（如果选择了某些IP，则只显示选中的；否则显示全部）
@@ -1008,6 +1206,31 @@ const _RemoteTab: React.FC<{ visible: boolean }> = ({ visible }) => {
             刷新
           </button>
         </div>
+      </div>
+
+      {/* 最大连接数 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">最大连接数</label>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            value={maxConnInput}
+            onChange={(e) => { setMaxConnInput(e.target.value); setMaxConnError(''); }}
+            className="flex-1 px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 focus:outline-none focus:border-accent-primary"
+            min={0}
+            max={100}
+            placeholder="0 = 不限制"
+            disabled={!status.enabled}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+          <button onClick={handleMaxConnChange}
+            disabled={loading || !status.enabled}
+            className="px-3 py-1.5 bg-accent-primary text-dark-900 rounded text-sm font-medium hover:bg-accent-primary/80 transition-colors disabled:opacity-50">
+            应用
+          </button>
+        </div>
+        {maxConnError && <p className="text-xs text-red-400">{maxConnError}</p>}
+        <div className="text-xs text-dark-500">设置为 0 表示不限制，超过上限时远程客户端会收到友好提示</div>
       </div>
 
       {/* 访问地址 */}

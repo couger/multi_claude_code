@@ -26,11 +26,13 @@ let processManager: ProcessManager | null = null;
 let performanceMonitor: PerformanceMonitor | null = null;
 let groupManager: GroupManager | null = null;
 let isWindowHidden = false; // 窗口是否处于隐藏状态（收起状态）
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let isManuallyHidden = false; // 手动一键隐藏标志
 let windowAutoHideEnabled = true;
-let hideDirection = 'right'; // 隐藏方向：'right' | 'left' | 'bottom' | 'top'
+let hideDirection: 'left' | 'right' | 'bottom' | 'top' = 'right'; // 隐藏方向：默认右侧
 let autoHideTimer: ReturnType<typeof setTimeout> | null = null; // 自动隐藏定时器
 let autoHideDelayTimer: ReturnType<typeof setTimeout> | null = null; // 延迟收起定时器
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let isWindowRestored = false; // 窗口是否处于滑出状态
 let currentHandleSize = 10; // 把手大小（像素）
 let isProgrammaticMove = false; // 标记是否为程序控制的窗口移动（防止 move 事件干扰）
@@ -42,6 +44,9 @@ let httpPort = 8888;
 let httpAccessToken = '';
 let allowedIPs = new Set<string>();
 let httpServerEnabled = false; // Web 访问开关（默认关闭）
+let selectedServerIPs = new Set<string>(); // 用户选择的服务器IP（用于访问控制）
+let allowRemoteCreateSession = true; // 是否允许远程创建会话
+let maxRemoteConnections = 0; // 最大远程连接数（0 = 不限制）
 
 // WebSocket 客户端追踪
 interface WsClientInfo {
@@ -71,7 +76,7 @@ function hideWindowToEdge(targetDisplay: any, direction: string) {
   isWindowHidden = true;
   isManuallyHidden = true;
   isWindowRestored = false;
-  hideDirection = direction;
+  hideDirection = direction as 'left' | 'right' | 'bottom' | 'top';
 
   let newBounds;
 
@@ -176,226 +181,19 @@ function restoreWindow() {
       width: Math.round(currentBounds.width),
       height: Math.round(RESTORE_SIZE.height),
     };
+  } else {
+    // 默认右侧
+    restoreBounds = {
+      x: Math.round(display.bounds.x + display.bounds.width - RESTORE_SIZE.width - 4),
+      y: Math.round(currentBounds.y),
+      width: Math.round(RESTORE_SIZE.width),
+      height: Math.round(currentBounds.height),
+    };
   }
 
   isProgrammaticMove = true;
   mainWindow.setBounds(restoreBounds);
   isProgrammaticMove = false;
-}
-
-// 自动收起窗口
-function autoHideWindow() {
-  if (!mainWindow || !isWindowRestored) return;
-
-  if (autoHideTimer) {
-    clearTimeout(autoHideTimer);
-    autoHideTimer = null;
-  }
-
-  const currentBounds = mainWindow.getBounds();
-  const display = require('electron').screen.getDisplayNearestPoint(currentBounds);
-  const handleSize = currentHandleSize;
-
-  isWindowHidden = true;
-  isWindowRestored = false;
-  isManuallyHidden = true;
-  mainWindow.setResizable(false);
-  mainWindow.setSkipTaskbar(true);
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
-
-  let hideBounds;
-  if (hideDirection === 'right') {
-    hideBounds = {
-      x: Math.round(display.bounds.x + display.bounds.width - handleSize),
-      y: Math.round(currentBounds.y),
-      width: Math.round(handleSize),
-      height: Math.round(currentBounds.height),
-    };
-  } else if (hideDirection === 'left') {
-    hideBounds = {
-      x: Math.round(display.bounds.x),
-      y: Math.round(currentBounds.y),
-      width: Math.round(handleSize),
-      height: Math.round(currentBounds.height),
-    };
-  } else if (hideDirection === 'bottom') {
-    hideBounds = {
-      x: Math.round(currentBounds.x),
-      y: Math.round(display.bounds.y + display.bounds.height - handleSize),
-      width: Math.round(currentBounds.width),
-      height: Math.round(handleSize),
-    };
-  } else if (hideDirection === 'top') {
-    hideBounds = {
-      x: Math.round(currentBounds.x),
-      y: Math.round(display.bounds.y),
-      width: Math.round(currentBounds.width),
-      height: Math.round(handleSize),
-    };
-  }
-
-  isProgrammaticMove = true;
-  mainWindow.setBounds(hideBounds);
-  isProgrammaticMove = false;
-}
-
-// ==================== 窗口贴边自动隐藏 ====================
-
-function setupWindowAutoHide() {
-  if (!windowAutoHideEnabled) return;
-
-  const checkInterval = 500; // 每 500ms 检查一次窗口位置
-  const edgeThreshold = 10; // 贴边阈值（像素）
-
-  const checkWindowPosition = () => {
-    if (!mainWindow) {
-      setTimeout(checkWindowPosition, checkInterval);
-      return;
-    }
-    if (mainWindow.isMinimized()) {
-      // 窗口最小化时跳过贴边检测
-      setTimeout(checkWindowPosition, checkInterval);
-      return;
-    }
-    if (isManuallyHidden || isWindowHidden || isWindowRestored) {
-      // 窗口隐藏期间或已滑出状态下保持轮询，不重复触发贴边检测
-      setTimeout(checkWindowPosition, checkInterval);
-      return;
-    }
-
-    const bounds = mainWindow.getBounds();
-    const displays = require('electron').screen.getAllDisplays();
-
-    let isAtEdge = false;
-    let edgeType: string = 'right';
-    let targetDisplay = null;
-
-    for (const display of displays) {
-      const { x, y, width, height } = display.bounds;
-
-      // 检测是否贴靠屏幕边缘
-      const isAtLeft = Math.abs(bounds.x - x) < edgeThreshold;
-      const isAtRight = Math.abs(bounds.x + bounds.width - (x + width)) < edgeThreshold;
-      const isAtTop = Math.abs(bounds.y - y) < edgeThreshold;
-      const isAtBottom = Math.abs(bounds.y + bounds.height - (y + height)) < edgeThreshold;
-
-      if (isAtLeft || isAtRight || isAtTop || isAtBottom) {
-        isAtEdge = true;
-        targetDisplay = display;
-        if (isAtLeft) edgeType = 'left';
-        else if (isAtRight) edgeType = 'right';
-        else if (isAtTop) edgeType = 'top';
-        else if (isAtBottom) edgeType = 'bottom';
-        break;
-      }
-    }
-
-    // 只有当窗口是正常状态且贴边时才自动隐藏
-    if (isAtEdge && bounds.height > 100) {
-      hideWindowToEdge(targetDisplay!, edgeType);
-    }
-
-    setTimeout(checkWindowPosition, checkInterval);
-  };
-
-  // 监听鼠标位置，控制窗口的展开/收起
-  const checkMousePosition = () => {
-    if (!mainWindow || mainWindow.isMinimized()) return;
-
-    const cursor = require('electron').screen.getCursorScreenPoint();
-    const display = require('electron').screen.getDisplayNearestPoint(cursor);
-
-    if (isWindowHidden) {
-      // 窗口处于隐藏状态，检测鼠标是否在隐藏窗口区域内或边缘触发区域
-      const winBounds = mainWindow.getBounds();
-      const triggerArea = 100; // 鼠标触发恢复的区域宽度
-
-      // 检测鼠标是否在隐藏窗口的矩形区域内（包括把手）
-      const isMouseOnHandle = cursor.x >= winBounds.x && cursor.x < winBounds.x + winBounds.width &&
-                              cursor.y >= winBounds.y && cursor.y < winBounds.y + winBounds.height;
-
-      let shouldRestore = isMouseOnHandle; // 鼠标在把手上时恢复
-
-      // 同时也检测屏幕边缘触发区域
-      if (!shouldRestore && hideDirection === 'right') {
-        shouldRestore = cursor.x >= display.bounds.x + display.bounds.width - triggerArea;
-      } else if (!shouldRestore && hideDirection === 'left') {
-        shouldRestore = cursor.x <= display.bounds.x + triggerArea;
-      } else if (!shouldRestore && hideDirection === 'bottom') {
-        shouldRestore = cursor.y >= display.bounds.y + display.bounds.height - triggerArea;
-      } else if (!shouldRestore && hideDirection === 'top') {
-        shouldRestore = cursor.y <= display.bounds.y + triggerArea;
-      }
-
-      if (shouldRestore) {
-        restoreWindow();
-      }
-    } else if (!isWindowHidden && isWindowRestored) {
-      // 窗口处于滑出状态，检测是否应该收起
-      const winBounds = mainWindow.getBounds();
-      const isMouseInWindow = cursor.x >= winBounds.x && cursor.x < winBounds.x + winBounds.width &&
-                               cursor.y >= winBounds.y && cursor.y < winBounds.y + winBounds.height;
-
-      // 检测鼠标是否还在边缘附近
-      const display = require('electron').screen.getDisplayNearestPoint(cursor);
-      let isMouseNearEdge = false;
-      const edgeThreshold = 50;
-
-      if (hideDirection === 'right') {
-        isMouseNearEdge = cursor.x >= display.bounds.x + display.bounds.width - edgeThreshold;
-      } else if (hideDirection === 'left') {
-        isMouseNearEdge = cursor.x <= display.bounds.x + edgeThreshold;
-      } else if (hideDirection === 'bottom') {
-        isMouseNearEdge = cursor.y >= display.bounds.y + display.bounds.height - edgeThreshold;
-      } else if (hideDirection === 'top') {
-        isMouseNearEdge = cursor.y <= display.bounds.y + edgeThreshold;
-      }
-
-      // 如果鼠标离开了窗口且不在边缘附近，启动延迟收起定时器
-      if (!isMouseInWindow && !isMouseNearEdge) {
-        if (!autoHideDelayTimer) {
-          autoHideDelayTimer = setTimeout(() => {
-            // 再次检查鼠标位置，确认是否真的离开了
-            const newCursor = require('electron').screen.getCursorScreenPoint();
-            const newWinBounds = mainWindow.getBounds();
-            const newDisplay = require('electron').screen.getDisplayNearestPoint(newCursor);
-            const isMouseStillInWindow = newCursor.x >= newWinBounds.x &&
-                                          newCursor.x < newWinBounds.x + newWinBounds.width &&
-                                          newCursor.y >= newWinBounds.y &&
-                                          newCursor.y < newWinBounds.y + newWinBounds.height;
-
-            // 再次检查是否还在边缘附近
-            let isMouseStillNearEdge = false;
-            if (hideDirection === 'right') {
-              isMouseStillNearEdge = newCursor.x >= newDisplay.bounds.x + newDisplay.bounds.width - edgeThreshold;
-            } else if (hideDirection === 'left') {
-              isMouseStillNearEdge = newCursor.x <= newDisplay.bounds.x + edgeThreshold;
-            } else if (hideDirection === 'bottom') {
-              isMouseStillNearEdge = newCursor.y >= newDisplay.bounds.y + newDisplay.bounds.height - edgeThreshold;
-            } else if (hideDirection === 'top') {
-              isMouseStillNearEdge = newCursor.y <= newDisplay.bounds.y + edgeThreshold;
-            }
-
-            if (!isMouseStillInWindow && !isMouseStillNearEdge && isWindowRestored) {
-              autoHideWindow();
-            }
-            autoHideDelayTimer = null;
-          }, 1000); // 1 秒延迟
-        }
-      } else {
-        // 鼠标在窗口内或在边缘附近，取消收起定时器
-        if (autoHideDelayTimer) {
-          clearTimeout(autoHideDelayTimer);
-          autoHideDelayTimer = null;
-        }
-      }
-    }
-
-    setTimeout(checkMousePosition, 100);
-  };
-
-  checkWindowPosition();
-  checkMousePosition();
 }
 
 // 导出 sendToRenderer 供 ProcessManager 使用
@@ -478,41 +276,81 @@ function createWindow() {
 
 function initIPC() {
   if (!processManager) return;
+  const pm = processManager; // 本地引用，TypeScript 知道此处非 null
 
   ipcMain.handle(IPC_CHANNELS.CREATE_SESSION, async (_: any, options: any) => {
-    return processManager.createSession(options);
+    // 检查工作目录冲突
+    const workDir = options.workDir || require('os').homedir();
+    const conflicts = pm.checkWorkDirConflict(workDir);
+    if (conflicts.length > 0 && !options.skipConflictCheck) {
+      const conflictNames = conflicts.map(c =>
+        `"${c.sessionName}" (${c.workDir}) - ${c.conflictType === 'same' ? '相同目录' : c.conflictType === 'child' ? '子目录' : '父目录'}`
+      ).join('\n');
+      const choice = dialog.showMessageBoxSync(mainWindow!, {
+        type: 'warning',
+        title: '工作目录冲突',
+        message: '检测到工作目录与其他运行中的会话重叠：',
+        detail: `${conflictNames}\n\n重叠的工作目录可能导致文件操作互相干扰。\n是否仍要创建此会话？`,
+        buttons: ['取消', '仍然创建'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (choice === 0) {
+        throw new Error('WORKDIR_CONFLICT');
+      }
+    }
+    return pm.createSession(options);
   });
 
   ipcMain.handle(IPC_CHANNELS.KILL_SESSION, async (_: any, sessionId: string) => {
-    return processManager.killSession(sessionId);
+    const result = await pm.killSession(sessionId);
+    // 从所有分组中移除该会话
+    if (groupManager) {
+      groupManager.removeSessionFromAllGroups(sessionId);
+    }
+    return result;
   });
 
   ipcMain.handle(IPC_CHANNELS.GET_SESSIONS, async () => {
-    return processManager.getSessions();
+    return pm.getSessions();
   });
 
   ipcMain.handle(IPC_CHANNELS.GET_SESSION_OUTPUT, async (_: any, sessionId: string) => {
-    return processManager.getSessionOutput(sessionId);
+    return pm.getSessionOutput(sessionId);
   });
 
   ipcMain.on(IPC_CHANNELS.SEND_INPUT, (_event: any, sessionId: string, data: string) => {
-    processManager.sendInput(sessionId, data);
+    pm.sendInput(sessionId, data);
   });
 
   ipcMain.on(IPC_CHANNELS.RESIZE_SESSION, (_event: any, sessionId: string, cols: number, rows: number) => {
-    processManager.resizeSession(sessionId, cols, rows);
+    pm.resizeSession(sessionId, cols, rows);
   });
 
   ipcMain.handle(IPC_CHANNELS.SELECT_WORKDIR, async (): Promise<string | null> => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+    // 从localStorage获取用户设置的默认起始目录
+    let defaultPath = app.getPath('home');
+    try {
+      const fsModule = require('fs');
+      const configDir = path.join(require('os').homedir(), '.claude-code-manager');
+      const configFile = path.join(configDir, 'config.json');
+      if (fsModule.existsSync(configFile)) {
+        const config = JSON.parse(fsModule.readFileSync(configFile, 'utf-8'));
+        if (config.defaultBrowseDir) {
+          defaultPath = config.defaultBrowseDir;
+        }
+      }
+    } catch { /* use default */ }
+
+    const result = await dialog.showOpenDialog(mainWindow!, {
       properties: ['openDirectory'],
-      defaultPath: app.getPath('home'),
+      defaultPath,
     });
     return result.filePaths[0] || null;
   });
 
   ipcMain.on(IPC_CHANNELS.SET_NOTE, (_event: any, sessionId: string, note: string) => {
-    processManager.setNote(sessionId, note);
+    pm.setNote(sessionId, note);
   });
 
   // 批量操作处理
@@ -520,7 +358,7 @@ function initIPC() {
     const results = [];
     for (const config of sessionsConfig) {
       try {
-        const session = await processManager.createSession(config);
+        const session = await pm.createSession(config);
         results.push({ success: true, session });
       } catch (error: any) {
         results.push({ success: false, error: error?.message || String(error) });
@@ -533,7 +371,7 @@ function initIPC() {
     const results = [];
     for (const sessionId of sessionIds) {
       try {
-        await processManager.killSession(sessionId);
+        await pm.killSession(sessionId);
         results.push({ success: true, sessionId });
       } catch (error: any) {
         results.push({ success: false, sessionId, error: error?.message || String(error) });
@@ -575,7 +413,7 @@ function initIPC() {
     const results = [];
     for (const sessionId of sessionIds) {
       try {
-        const log = processManager.getSessionOutput(sessionId);
+        const log = pm.getSessionOutput(sessionId);
         results.push({ success: true, sessionId, log });
       } catch (error: any) {
         results.push({ success: false, sessionId, error: error?.message || String(error) });
@@ -588,7 +426,7 @@ function initIPC() {
     const results = [];
     for (const sessionId of sessionIds) {
       try {
-        processManager.setNote(sessionId, note);
+        pm.setNote(sessionId, note);
         results.push({ success: true, sessionId });
       } catch (error: any) {
         results.push({ success: false, sessionId, error: error?.message || String(error) });
@@ -734,7 +572,7 @@ function initIPC() {
     if (enabled && !httpServer) {
       startHttpServer();
     } else if (!enabled && httpServer) {
-      stopHttpServer();
+      stopHttpServer(true); // 优雅关闭
     }
     return { success: true, enabled: httpServerEnabled, running: !!httpServer };
   });
@@ -779,6 +617,90 @@ function initIPC() {
     }
     wsClients.clear();
     return { success: true };
+  });
+
+  // 设置允许访问的服务器IP（用户选择的IP地址）
+  ipcMain.handle('remote:setSelectedIPs', async (_: any, ips: string[]) => {
+    const prevSize = selectedServerIPs.size;
+    selectedServerIPs = new Set(ips);
+
+    // 如果之前有选择但现在全部取消了，关闭服务器并通知远程客户端
+    if (prevSize > 0 && selectedServerIPs.size === 0 && httpServer) {
+      // 先通知所有远程客户端
+      broadcastToWs({ channel: 'remote-access-closed', data: { reason: '所有访问地址已取消选择' } });
+      // 断开所有客户端
+      setTimeout(() => {
+        for (const [_clientId, clientInfo] of wsClients) {
+          try { clientInfo.ws.close(4004, 'All IPs deselected'); } catch { /* ignore */ }
+        }
+        wsClients.clear();
+        stopHttpServer();
+        httpServerEnabled = false;
+      }, 500);
+    }
+
+    // 如果有选中的IP变化，踢出通过未选中IP连接的客户端
+    if (selectedServerIPs.size > 0 && httpServer) {
+      // 只限制新连接，不踢出已连接的客户端
+    }
+
+    return { success: true, ips: [...selectedServerIPs] };
+  });
+
+  // 获取当前选中的服务器IP
+  ipcMain.handle('remote:getSelectedIPs', async () => {
+    return [...selectedServerIPs];
+  });
+
+  // 获取/设置通用设置（同步到远程Web界面）
+  ipcMain.handle('settings:getGeneral', async () => {
+    return {
+      allowRemoteCreateSession,
+      maxRemoteConnections,
+      hideDirection,
+    };
+  });
+  ipcMain.on('settings:broadcastGeneral', (_event: any, settings: any) => {
+    // 更新主进程中的设置
+    if (settings.allowRemoteCreateSession !== undefined) {
+      allowRemoteCreateSession = settings.allowRemoteCreateSession;
+    }
+    if (settings.maxRemoteConnections !== undefined) {
+      maxRemoteConnections = settings.maxRemoteConnections;
+    }
+    // 更新隐藏方向
+    if (settings.hideDirection !== undefined && (settings.hideDirection === 'left' || settings.hideDirection === 'right')) {
+      hideDirection = settings.hideDirection;
+    }
+    // 持久化 defaultBrowseDir 到 config.json
+    if (settings.defaultBrowseDir !== undefined) {
+      try {
+        const fsModule = require('fs');
+        const configDir = path.join(require('os').homedir(), '.claude-code-manager');
+        const configFile = path.join(configDir, 'config.json');
+        let config: any = {};
+        if (fsModule.existsSync(configFile)) {
+          config = JSON.parse(fsModule.readFileSync(configFile, 'utf-8'));
+        }
+        if (settings.defaultBrowseDir) {
+          config.defaultBrowseDir = settings.defaultBrowseDir;
+        } else {
+          delete config.defaultBrowseDir;
+        }
+        // 同时保存 hideDirection
+        if (settings.hideDirection) {
+          config.hideDirection = settings.hideDirection;
+        }
+        fsModule.writeFileSync(configFile, JSON.stringify(config, null, 2));
+      } catch { /* ignore */ }
+    }
+    // 广播通用设置到所有远程客户端（包含 allowRemoteCreateSession 用于 UI 控制）
+    broadcastToWs({ channel: 'settings:general', data: {
+      ...settings,
+      allowRemoteCreateSession,
+      maxRemoteConnections,
+      hideDirection,
+    } });
   });
 
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
@@ -847,6 +769,7 @@ function initIPC() {
 
   // 窗口贴边隐藏切换
   ipcMain.on('window:toggle-auto-hide', () => {
+    if (!mainWindow) return;
     windowAutoHideEnabled = !windowAutoHideEnabled;
     if (!windowAutoHideEnabled && isWindowHidden) {
       isWindowHidden = false;
@@ -900,7 +823,7 @@ function initIPC() {
   // 注意：仅当用户手动拖动窗口时才恢复，程序控制的移动（贴边/恢复）通过 isProgrammaticMove 标记跳过
   mainWindow?.on('move', () => {
     if (isProgrammaticMove) return; // 跳过程序控制的移动
-    if (isWindowHidden) {
+    if (isWindowHidden && mainWindow) {
       isWindowHidden = false;
       isManuallyHidden = false;
       isWindowRestored = false;
@@ -973,6 +896,11 @@ function proxyToVite(req: any, res: any) {
 
 async function startHttpServer() {
   if (httpServer) return;
+  if (!processManager) {
+    console.error('Cannot start HTTP server: processManager not initialized');
+    return;
+  }
+  const pm = processManager; // 本地引用
 
   const http = require('http');
   const url = require('url');
@@ -1036,6 +964,18 @@ async function startHttpServer() {
 
     // ---- 公开端点 ----
 
+    // 检查请求的目标IP是否在用户选中的IP列表中
+    const hostHeader = headers.host || '';
+    const targetIP = hostHeader.split(':')[0]; // 从 Host 头提取IP
+    const isTargetIPAllowed = selectedServerIPs.size === 0 || selectedServerIPs.has(targetIP);
+
+    // 如果用户选择了特定IP但当前请求的目标IP不在列表中，直接断开连接（模拟服务不可达）
+    if (selectedServerIPs.size > 0 && !isTargetIPAllowed) {
+      // 销毁连接，不发送任何响应，让浏览器显示"无法访问此网站"
+      req.socket.destroy();
+      return;
+    }
+
     // 健康检查端点 - 对所有IP开放
     if (pathname === '/api/status') {
       const interfaces = require('os').networkInterfaces();
@@ -1053,7 +993,7 @@ async function startHttpServer() {
         version: '0.1.0',
         localIPs,
         port: httpPort,
-        accessEnabled: true,
+        accessEnabled: selectedServerIPs.size === 0 || isTargetIPAllowed,
         accessToken: httpAccessToken,
         clientIP,
         timestamp: new Date().toISOString(),
@@ -1132,7 +1072,7 @@ async function startHttpServer() {
 
     // 获取会话列表
     if (pathname === '/api/sessions' && method === 'GET') {
-      const sessions = processManager.getSessions();
+      const sessions = pm.getSessions();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessions }));
       return;
@@ -1140,10 +1080,15 @@ async function startHttpServer() {
 
     // 创建新会话
     if (pathname === '/api/sessions' && method === 'POST') {
+      if (!allowRemoteCreateSession) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '远程创建会话已被管理员禁用' }));
+        return;
+      }
       const body = await collectBody(req);
       try {
         const options = JSON.parse(body);
-        const session = await processManager.createSession(options);
+        const session = await pm.createSession(options);
         res.writeHead(201, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ session }));
       } catch (err: any) {
@@ -1156,7 +1101,7 @@ async function startHttpServer() {
     // 获取会话输出
     if (pathname?.startsWith('/api/sessions/') && pathname.endsWith('/output')) {
       const sessionId = pathname.split('/')[3];
-      const output = processManager.getSessionOutput(sessionId);
+      const output = pm.getSessionOutput(sessionId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessionId, output }));
       return;
@@ -1168,7 +1113,7 @@ async function startHttpServer() {
       try {
         const data = JSON.parse(body);
         const sessionId = pathname.split('/')[3];
-        processManager.sendInput(sessionId, data.input);
+        pm.sendInput(sessionId, data.input);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch {
@@ -1184,7 +1129,7 @@ async function startHttpServer() {
       try {
         const { note } = JSON.parse(body);
         const sessionId = pathname.split('/')[3];
-        processManager.setNote(sessionId, note);
+        pm.setNote(sessionId, note);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch {
@@ -1200,7 +1145,7 @@ async function startHttpServer() {
       try {
         const { cols, rows } = JSON.parse(body);
         const sessionId = pathname.split('/')[3];
-        processManager.resizeSession(sessionId, cols, rows);
+        pm.resizeSession(sessionId, cols, rows);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch {
@@ -1214,7 +1159,7 @@ async function startHttpServer() {
     if (pathname?.startsWith('/api/sessions/') && pathname.endsWith('/close') && method === 'POST') {
       const sessionId = pathname.split('/')[3];
       try {
-        await processManager.killSession(sessionId);
+        await pm.killSession(sessionId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (err) {
@@ -1258,12 +1203,26 @@ async function startHttpServer() {
   });
 
   // WebSocket 服务器
-  wss = new WebSocket.Server({ server });
+  const wsServer = new WebSocket.Server({ server });
+  wss = wsServer;
 
-  wss.on('connection', (ws: any, req: any) => {
+  wsServer.on('connection', (ws: any, req: any) => {
     const parsedUrl = url.parse(req.url!, true);
     const token = parsedUrl.query?.token || '';
     const clientIP = req.socket.remoteAddress || 'unknown';
+
+    // 检查最大连接数限制
+    if (maxRemoteConnections > 0 && wsClients.size >= maxRemoteConnections) {
+      // 先发送友好提示消息，然后关闭连接
+      ws.send(JSON.stringify({
+        channel: 'connection-rejected',
+        data: { reason: `当前连接数已达上限 (${maxRemoteConnections})，请稍后再试` },
+      }));
+      setTimeout(() => {
+        try { ws.close(4005, 'Max connections reached'); } catch { /* ignore */ }
+      }, 500);
+      return;
+    }
 
     // 如果启用了IP白名单（allowedIPs不为空），检查客户端IP是否被允许
     if (allowedIPs.size > 0 && !allowedIPs.has(clientIP)) {
@@ -1296,6 +1255,14 @@ async function startHttpServer() {
       ws.send(JSON.stringify({
         channel: 'session:list',
         data: { sessions },
+      }));
+      // 发送当前远程创建会话设置
+      ws.send(JSON.stringify({
+        channel: 'settings:general',
+        data: {
+          allowRemoteCreateSession,
+          maxRemoteConnections,
+        },
       }));
     }
 
@@ -1350,37 +1317,63 @@ async function startHttpServer() {
 function handleWsMessage(ws: any, msg: any) {
   const { action, id, data } = msg;
   if (!processManager) return;
+  const pm = processManager; // 本地引用
 
   (async () => {
     try {
       let result: any;
       switch (action) {
         case 'session:create':
-          result = await processManager.createSession(data || {});
-          ws.send(JSON.stringify({ channel: 'ws:response', id, data: { success: true, session: result } }));
+          // 检查是否允许远程创建会话
+          if (!allowRemoteCreateSession) {
+            ws.send(JSON.stringify({ channel: 'ws:response', id, data: {
+              success: false,
+              error: '远程创建会话已被管理员禁用',
+            }}));
+            break;
+          }
+          // 检查工作目录冲突（浏览器端不弹确认框，返回冲突信息）
+          {
+            const createWorkDir = data?.workDir || require('os').homedir();
+            const createConflicts = pm.checkWorkDirConflict(createWorkDir);
+            if (createConflicts.length > 0 && !data?.skipConflictCheck) {
+              ws.send(JSON.stringify({ channel: 'ws:response', id, data: {
+                success: false,
+                error: 'WORKDIR_CONFLICT',
+                conflicts: createConflicts,
+              }}));
+              break;
+            }
+            result = await pm.createSession(data || {});
+            ws.send(JSON.stringify({ channel: 'ws:response', id, data: { success: true, session: result } }));
+          }
           break;
         case 'session:kill':
-          await processManager.killSession(data.sessionId);
+          await pm.killSession(data.sessionId);
+          // 从所有分组中移除该会话
+          if (groupManager) {
+            groupManager.removeSessionFromAllGroups(data.sessionId);
+          }
           ws.send(JSON.stringify({ channel: 'ws:response', id, data: { success: true } }));
           break;
         case 'session:list':
-          result = processManager.getSessions();
+          result = pm.getSessions();
           ws.send(JSON.stringify({ channel: 'ws:response', id, data: { sessions: result } }));
           break;
         case 'session:output':
-          result = processManager.getSessionOutput(data.sessionId);
+          result = pm.getSessionOutput(data.sessionId);
           ws.send(JSON.stringify({ channel: 'ws:response', id, data: { output: result } }));
           break;
         case 'session:input':
-          processManager.sendInput(data.sessionId, data.input);
+          pm.sendInput(data.sessionId, data.input);
           ws.send(JSON.stringify({ channel: 'ws:response', id, data: { success: true } }));
           break;
         case 'session:note':
-          processManager.setNote(data.sessionId, data.note);
+          pm.setNote(data.sessionId, data.note);
           ws.send(JSON.stringify({ channel: 'ws:response', id, data: { success: true } }));
           break;
         case 'session:resize':
-          processManager.resizeSession(data.sessionId, data.cols, data.rows);
+          pm.resizeSession(data.sessionId, data.cols, data.rows);
           ws.send(JSON.stringify({ channel: 'ws:response', id, data: { success: true } }));
           break;
         // 性能监控
@@ -1497,19 +1490,34 @@ function getLoginPage(): string {
 </html>`;
 }
 
-function stopHttpServer() {
+function stopHttpServer(graceful = false) {
+  // 先广播关闭消息给所有客户端
+  if (graceful && wss) {
+    broadcastToWs({ channel: 'remote-access-closed', data: { reason: '远程访问已关闭' } });
+  }
+
+  // 关闭所有 WebSocket 连接
   if (wss) {
     for (const client of wss.clients) {
-      client.close();
+      try {
+        client.close(4004, graceful ? 'Server shutting down' : 'Server stopped');
+      } catch { /* ignore */ }
     }
-    wss.close();
-    wss = null;
+    // 强制关闭所有连接
+    wss.close(() => {
+      wss = null;
+    });
   }
+
+  // 关闭 HTTP 服务器
   if (httpServer) {
-    httpServer.close();
-    httpServer = null;
+    // 关闭所有保持活动的连接
+    httpServer.closeAllConnections?.();
+    httpServer.close(() => {
+      httpServer = null;
+      console.log('HTTP/WebSocket server stopped');
+    });
   }
-  console.log('HTTP/WebSocket server stopped');
 }
 
 // ==================== 主进程入口 ====================
@@ -1581,13 +1589,13 @@ process.on('uncaughtException', (error) => {
   }
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason, _promise) => {
   console.error('未处理的Promise拒绝:', reason);
   // 记录但不崩溃
 });
 
 app.on('before-quit', () => {
-  stopHttpServer();
+  stopHttpServer(true); // 优雅关闭
 });
 
 app.on('window-all-closed', () => {

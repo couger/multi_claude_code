@@ -61,6 +61,9 @@ export interface ElectronAPI {
   refreshToken: () => Promise<{ success: boolean; token: string }>;
   kickClient: (clientId: string) => Promise<{ success: boolean }>;
   kickAllClients: () => Promise<{ success: boolean }>;
+  setSelectedIPs: (ips: string[]) => Promise<{ success: boolean; ips: string[] }>;
+  getSelectedIPs: () => Promise<string[]>;
+  broadcastGeneralSettings: (settings: any) => void;
 
   // 标记 Electron 环境
   isElectron?: boolean;

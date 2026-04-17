@@ -134,6 +134,31 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
       const finalWorkDir = useLastDir && lastWorkDir ? lastWorkDir : workDir;
       const args = buildArgs();
 
+      // 检查工作目录冲突
+      if (finalWorkDir && sessions.length > 0) {
+        const normalizedNew = finalWorkDir.replace(/\\/g, '/').toLowerCase().replace(/\/$/, '');
+        const hasConflict = sessions.some(s => {
+          if (s.status === 'completed' || s.status === 'error') return false;
+          const normalizedExisting = (s.workDir || '').replace(/\\/g, '/').toLowerCase().replace(/\/$/, '');
+          if (!normalizedExisting) return false;
+          if (normalizedNew === normalizedExisting) return true;
+          if (normalizedNew.startsWith(normalizedExisting + '/')) return true;
+          if (normalizedExisting.startsWith(normalizedNew + '/')) return true;
+          return false;
+        });
+        if (hasConflict) {
+          const proceed = confirm(
+            '⚠️ 检测到工作目录与其他运行中的会话重叠。\n\n' +
+            '重叠的工作目录可能导致文件操作互相干扰。\n\n' +
+            '是否仍要创建此会话？'
+          );
+          if (!proceed) {
+            setLoading(false);
+            return;
+          }
+        }
+      }
+
       // 保存到 localStorage
       if (finalWorkDir) {
         localStorage.setItem('lastWorkDir', finalWorkDir);
@@ -151,7 +176,7 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [name, workDir, lastWorkDir, useLastDir, buildArgs, onCreate, onClose]);
+  }, [name, workDir, lastWorkDir, useLastDir, buildArgs, onCreate, onClose, sessions]);
 
   // 快速创建（使用上次目录和参数）
   const handleQuickCreate = useCallback(async () => {

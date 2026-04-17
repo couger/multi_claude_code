@@ -10,9 +10,10 @@ interface ExpandedViewProps {
   session: Session;
   onClose: (id: string) => void;
   onCollapse: () => void;
+  terminalFontSize?: number;
 }
 
-const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollapse }) => {
+const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollapse, terminalFontSize }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -83,7 +84,7 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
           brightWhite: '#f0f6fc',
         },
         fontFamily: '"Cascadia Code", "Fira Code", Consolas, Monaco, monospace',
-        fontSize: 14,
+        fontSize: terminalFontSize || 14,
         lineHeight: 1.2,
         cursorBlink: true,
         cursorStyle: 'block',
@@ -132,7 +133,7 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
         fitAddonRef.current = null;
       }
     };
-  }, [session.id]);
+  }, [session.id, terminalFontSize]);
 
   // 窗口大小调整
   useEffect(() => {

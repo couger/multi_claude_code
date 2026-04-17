@@ -28,6 +28,9 @@ const DEFAULT_SIDEBAR_WIDTH = 280;
 interface GeneralSettings {
   showGroupPanel: boolean;
   showPerformancePanel: boolean;
+  defaultBrowseDir?: string;
+  allowRemoteCreateSession?: boolean;
+  terminalFontSize?: number;
 }
 
 interface SidebarProps {
@@ -74,6 +77,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [newGroupIcon, setNewGroupIcon] = useState(PRESET_ICONS[0]);
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
   const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
+  const [dragOverSessionList, setDragOverSessionList] = useState(false); // 拖拽到会话列表区域
+  const dragCounterRef = useRef(0); // 防止拖拽闪动的计数器
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set()); // 展开的分组
   const [groupPanelCollapsed, setGroupPanelCollapsed] = useState(false); // 分组面板是否折叠
 
@@ -144,9 +149,12 @@ const Sidebar: React.FC<SidebarProps> = ({
     localIPs: string[];
   } | null>(null);
   const [togglingRemote, setTogglingRemote] = useState(false);
-  const [showNetworkTooltip, setShowNetworkTooltip] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_showNetworkTooltip, _setShowNetworkTooltip] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
+  const [copiedIP, setCopiedIP] = useState<string | null>(null);
   const [showAddresses, setShowAddresses] = useState(false);
+  const addressHideTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   // 选中的IP地址（从localStorage读取）
   const [selectedIPs, setSelectedIPs] = useState<Set<string>>(() => {
@@ -301,19 +309,37 @@ const Sidebar: React.FC<SidebarProps> = ({
   // 拖拽会话到分组
   const handleDragStart = useCallback((sessionId: string) => {
     setDraggingSessionId(sessionId);
+    dragCounterRef.current = 0;
   }, []);
 
-  const handleDragOver = useCallback((e: React.DragEvent, groupId: string) => {
+  const handleGroupDragEnter = useCallback((e: React.DragEvent, groupId: string) => {
     e.preventDefault();
     e.stopPropagation();
+    dragCounterRef.current++;
     setDragOverGroupId(groupId);
   }, []);
 
-  const handleDragLeave = useCallback(() => {
-    setDragOverGroupId(null);
+  const handleGroupDragOver = useCallback((e: React.DragEvent, groupId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // 仅在状态未设置时更新，避免不必要的重渲染
+    if (dragOverGroupId !== groupId) {
+      setDragOverGroupId(groupId);
+    }
+  }, [dragOverGroupId]);
+
+  const handleGroupDragLeave = useCallback((e: React.DragEvent) => {
+    e.stopPropagation();
+    dragCounterRef.current--;
+    // 只有当计数器归零时才真正移除高亮
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setDragOverGroupId(null);
+    }
   }, []);
 
   const handleDrop = useCallback(async (groupId: string) => {
+    dragCounterRef.current = 0;
     if (!draggingSessionId) return;
     try {
       await window.electronAPI.addSessionToGroup(groupId, draggingSessionId);
@@ -324,7 +350,50 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
     setDraggingSessionId(null);
     setDragOverGroupId(null);
+    setDragOverSessionList(false);
   }, [draggingSessionId]);
+
+  // 拖拽到会话列表（从分组中移出）
+  const handleSessionListDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (!draggingSessionId) return;
+    setDragOverSessionList(true);
+  }, [draggingSessionId]);
+
+  const handleSessionListDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (draggingSessionId) {
+      setDragOverSessionList(true);
+    }
+  }, [draggingSessionId]);
+
+  const handleSessionListDragLeave = useCallback((e: React.DragEvent) => {
+    // 检查是否真的离开了容器（不是进入了子元素）
+    const relatedTarget = e.relatedTarget as Node | null;
+    const currentTarget = e.currentTarget as Node;
+    if (relatedTarget && currentTarget.contains(relatedTarget)) {
+      return; // 仍在容器内，不处理
+    }
+    setDragOverSessionList(false);
+  }, []);
+
+  const handleSessionListDrop = useCallback(async () => {
+    if (!draggingSessionId) return;
+    // 检查会话是否在分组中
+    const sourceGroup = groups.find(g => g.sessionIds.includes(draggingSessionId));
+    if (sourceGroup) {
+      try {
+        await window.electronAPI.removeSessionFromGroup(sourceGroup.id, draggingSessionId);
+        const result = await window.electronAPI.getGroups();
+        setGroups(result || []);
+      } catch (e) {
+        console.error('从分组移出会话失败:', e);
+      }
+    }
+    setDraggingSessionId(null);
+    setDragOverSessionList(false);
+    setDragOverGroupId(null);
+  }, [draggingSessionId, groups]);
 
   // 自动隐藏逻辑
   const [, forceUpdate] = useState({});
@@ -519,7 +588,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
             <button
               onClick={onCreateSession}
-              className="w-full py-2 bg-accent-primary text-dark-900 rounded hover:bg-accent-primary/80 transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+              className="sidebar-create-btn w-full py-2 bg-accent-primary text-dark-900 rounded hover:bg-accent-primary/80 transition-colors flex items-center justify-center gap-2 text-sm font-medium"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -536,7 +605,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   console.error('快速创建失败:', err);
                 }
               }}
-              className="w-full mt-1.5 py-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors text-xs flex items-center justify-center gap-1"
+              className="quick-create-btn w-full mt-1.5 py-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors text-xs flex items-center justify-center gap-1"
               title="使用上次目录快速创建"
             >
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -546,14 +615,27 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
 
-          {/* 会话列表 */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-2">
+          {/* 会话列表 - 也作为从分组拖出的放置区域 */}
+          <div
+            className={`flex-1 overflow-y-auto p-2 space-y-2 transition-colors ${
+              dragOverSessionList ? 'bg-accent-primary/10 border border-accent-primary border-dashed rounded' : ''
+            }`}
+            onDragEnter={handleSessionListDragEnter}
+            onDragOver={handleSessionListDragOver}
+            onDragLeave={handleSessionListDragLeave}
+            onDrop={handleSessionListDrop}
+          >
+            {dragOverSessionList && draggingSessionId && (
+              <div className="text-xs text-accent-primary text-center py-1 mb-1">
+                释放以从分组中移出
+              </div>
+            )}
             {displayedSessions.length === 0 && groups.length === 0 ? (
               <div className="text-center text-dark-500 text-sm py-8">
                 <p>暂无会话</p>
                 <p className="text-xs mt-1">点击上方按钮创建</p>
               </div>
-            ) : displayedSessions.length === 0 ? (
+            ) : displayedSessions.length === 0 && !dragOverSessionList ? (
               <div className="text-center text-dark-500 text-sm py-4">
                 <p>所有会话已分组</p>
               </div>
@@ -668,6 +750,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                       groups.map((group) => {
                         const isExpanded = expandedGroups.has(group.id);
                         const groupSessions = sessions.filter(s => group.sessionIds.includes(s.id));
+                        const activeSessionCount = groupSessions.length; // 只统计实际存在的会话
                         return (
                           <div key={group.id}>
                             <div
@@ -676,8 +759,9 @@ const Sidebar: React.FC<SidebarProps> = ({
                                   ? 'bg-accent-primary/20 border border-accent-primary border-dashed'
                                   : 'bg-dark-900 hover:bg-dark-700'
                               }`}
-                              onDragOver={(e) => handleDragOver(e, group.id)}
-                              onDragLeave={handleDragLeave}
+                              onDragEnter={(e) => handleGroupDragEnter(e, group.id)}
+                              onDragOver={(e) => handleGroupDragOver(e, group.id)}
+                              onDragLeave={handleGroupDragLeave}
                               onDrop={() => handleDrop(group.id)}
                               onClick={() => toggleGroupExpand(group.id)}
                             >
@@ -697,7 +781,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                                   style={{ backgroundColor: group.color }}
                                   title={group.color}
                                 />
-                                <span className="text-xs text-dark-500">{group.sessionIds.length}</span>
+                                <span className="text-xs text-dark-500">{activeSessionCount}</span>
                               </div>
                               {dragOverGroupId === group.id && (
                                 <div className="mt-1 text-xs text-accent-primary text-center">
@@ -757,7 +841,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                     }
                   }
                 }}
-                className="flex-1 text-xs py-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors"
+                className="sidebar-create-btn flex-1 text-xs py-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors"
               >
                 批量创建
               </button>
@@ -785,7 +869,25 @@ const Sidebar: React.FC<SidebarProps> = ({
             {remoteStatus && (
               <div className="relative">
                 {/* 第一行：网络状态 + 复制令牌 + 开关 + 下拉按钮 */}
-                <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
+                <div
+                  className="flex items-center justify-between p-2 bg-dark-900 rounded"
+                  onMouseEnter={() => {
+                    if (remoteStatus.running) {
+                      if (addressHideTimerRef.current) {
+                        clearTimeout(addressHideTimerRef.current);
+                        addressHideTimerRef.current = null;
+                      }
+                      setShowAddresses(true);
+                    }
+                  }}
+                  onMouseLeave={() => {
+                    if (showAddresses) {
+                      addressHideTimerRef.current = setTimeout(() => {
+                        setShowAddresses(false);
+                      }, 300);
+                    }
+                  }}
+                >
                   <div className="flex items-center gap-2">
                     <svg className="w-3.5 h-3.5 text-dark-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
@@ -802,22 +904,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                     </span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <span className="text-xs text-dark-500">复制令牌:</span>
-                    <button
-                      onClick={handleCopyToken}
-                      className="p-1 rounded hover:bg-dark-700 transition-colors"
-                      title="复制令牌"
-                    >
-                      {tokenCopied ? (
-                        <svg className="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      ) : (
-                        <svg className="w-3.5 h-3.5 text-dark-400 hover:text-dark-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                      )}
-                    </button>
                     <button
                       onClick={handleToggleRemote}
                       disabled={togglingRemote}
@@ -829,50 +915,81 @@ const Sidebar: React.FC<SidebarProps> = ({
                         remoteStatus.enabled ? 'left-5' : 'left-0.5'
                       }`} />
                     </button>
-                    {/* 下拉按钮 */}
-                    {displayedIPs.length > 0 && (
-                      <button
-                        onClick={() => setShowAddresses(!showAddresses)}
-                        className="p-1 rounded hover:bg-dark-700 transition-colors"
-                        title={showAddresses ? "收起地址列表" : "展开地址列表"}
-                      >
-                        <svg
-                          className={`w-3.5 h-3.5 text-dark-400 hover:text-dark-200 transition-transform ${showAddresses ? 'rotate-180' : ''}`}
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-                    )}
                   </div>
                 </div>
-                {/* 下拉地址列表 */}
-                {remoteStatus.running && displayedIPs.length > 0 && showAddresses && (
-                  <div className="mt-1 bg-dark-900 border border-dark-700 rounded overflow-hidden">
-                    <div className="p-2 border-b border-dark-700">
-                      <div className="text-xs text-dark-500">访问地址 (共 {displayedIPs.length} 个):</div>
+                {/* 悬浮滑出地址列表 - 覆盖层方式，不影响其他元素 */}
+                {remoteStatus.running && showAddresses && (
+                  <div
+                    className="absolute left-0 right-0 bottom-full mb-1 z-30 bg-dark-900 border border-dark-700 rounded shadow-lg"
+                    onMouseEnter={() => {
+                      if (addressHideTimerRef.current) {
+                        clearTimeout(addressHideTimerRef.current);
+                        addressHideTimerRef.current = null;
+                      }
+                    }}
+                    onMouseLeave={() => {
+                      addressHideTimerRef.current = setTimeout(() => {
+                        setShowAddresses(false);
+                      }, 200);
+                    }}
+                  >
+                    <div className="p-2 border-b border-dark-700 flex items-center justify-between">
+                      <div className="text-xs text-dark-500">访问地址 {displayedIPs.length > 0 ? `(共 ${displayedIPs.length} 个)` : ''}</div>
+                      <button
+                        onClick={handleCopyToken}
+                        className="flex items-center gap-1 px-2 py-0.5 text-xs text-dark-400 hover:text-dark-200 bg-dark-800 rounded hover:bg-dark-700 transition-colors"
+                        title="复制令牌"
+                      >
+                        {tokenCopied ? (
+                          <>
+                            <svg className="w-3 h-3 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            <span className="text-green-400">已复制</span>
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            <span>复制令牌</span>
+                          </>
+                        )}
+                      </button>
                     </div>
-                    <div className="max-h-48 overflow-y-auto">
-                      {displayedIPs.map((ip, idx) => (
+                    {displayedIPs.length > 0 ? (
+                      <div className="max-h-48 overflow-y-auto">
+                        {displayedIPs.map((ip) => (
                         <div key={ip} className="flex items-center justify-between p-2 hover:bg-dark-800 transition-colors border-b border-dark-800/50 last:border-b-0">
                           <span className="text-xs text-dark-300 font-mono select-text">http://{ip}:{remoteStatus.port}</span>
                           <button
                             onClick={async () => {
                               const url = `http://${ip}:${remoteStatus.port}/`;
                               try { await navigator.clipboard.writeText(url); } catch { /* ignore */ }
+                              setCopiedIP(ip);
+                              setTimeout(() => setCopiedIP(null), 2000);
                             }}
                             className="p-1 rounded hover:bg-dark-700 transition-colors"
                             title="复制地址"
                           >
-                            <svg className="w-3 h-3 text-dark-400 hover:text-dark-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
+                            {copiedIP === ip ? (
+                              <svg className="w-3 h-3 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : (
+                              <svg className="w-3 h-3 text-dark-400 hover:text-dark-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                              </svg>
+                            )}
                           </button>
                         </div>
                       ))}
-                    </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 text-xs text-dark-500 text-center">
+                        请在设置中选择要显示的IP地址
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

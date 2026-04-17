@@ -76,3 +76,9 @@
 .no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* 远程创建会话被禁用时隐藏相关按钮 */
+[data-remote-create-disabled="true"] .sidebar-create-btn,
+[data-remote-create-disabled="true"] .quick-create-btn {
+  display: none !important;
+}

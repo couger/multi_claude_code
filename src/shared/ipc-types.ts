@@ -2,7 +2,7 @@
  * IPC 通信类型定义
  */
 
-import { SessionStatus, AlertType, DisplayMode } from './constants';
+import { SessionStatus, AlertType } from './constants';
 
 // ==================== 基础类型定义 ====================
 

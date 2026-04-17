@@ -97,6 +97,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   refreshToken: () => ipcRenderer.invoke('remote:refreshToken'),
   kickClient: (clientId: string) => ipcRenderer.invoke('remote:kickClient', clientId),
   kickAllClients: () => ipcRenderer.invoke('remote:kickAll'),
+  setSelectedIPs: (ips: string[]) => ipcRenderer.invoke('remote:setSelectedIPs', ips),
+  getSelectedIPs: () => ipcRenderer.invoke('remote:getSelectedIPs'),
+  broadcastGeneralSettings: (settings: any) => ipcRenderer.send('settings:broadcastGeneral', settings),
 });
 
 // 鼠标进入/离开窗口事件 — 通过 DOM 事件检测并通知主进程

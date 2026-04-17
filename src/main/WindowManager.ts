@@ -293,7 +293,6 @@ export class WindowManager {
 
       let isAtEdge = false;
       let edgeType: HideDirection = 'right';
-      let targetDisplay = null;
 
       for (const display of displays) {
         const { x, y, width, height } = display.bounds;
@@ -306,7 +305,6 @@ export class WindowManager {
 
         if (isAtLeft || isAtRight || isAtTop || isAtBottom) {
           isAtEdge = true;
-          targetDisplay = display;
           if (isAtLeft) edgeType = 'left';
           else if (isAtRight) edgeType = 'right';
           else if (isAtTop) edgeType = 'top';
