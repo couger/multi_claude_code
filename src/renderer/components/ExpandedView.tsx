@@ -20,10 +20,57 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
   const [note, setNote] = useState(session.note);
   const [isEditingNote, setIsEditingNote] = useState(false);
   const [showEscConfirm, setShowEscConfirm] = useState(false);
+  const [escConfirmFocus, setEscConfirmFocus] = useState<'continue' | 'send'>('continue');
   const escConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const escConfirmRef = useRef<HTMLDivElement>(null);
 
   const outputBuffers = useSessionStore((state) => state.outputBuffers);
   const output = outputBuffers.get(session.id) || [];
+
+  // 处理ESC确认弹窗关闭
+  const handleEscConfirmClose = useCallback(() => {
+    setShowEscConfirm(false);
+    if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
+    xtermRef.current?.focus();
+  }, []);
+
+  // 处理发送ESC
+  const handleSendEsc = useCallback(() => {
+    window.electronAPI.sendInput(session.id, '\x1b');
+    handleEscConfirmClose();
+  }, [session.id, handleEscConfirmClose]);
+
+  // ESC确认弹窗键盘导航
+  useEffect(() => {
+    if (!showEscConfirm) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        setEscConfirmFocus(prev => prev === 'continue' ? 'send' : 'continue');
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (escConfirmFocus === 'continue') {
+          handleEscConfirmClose();
+        } else {
+          handleSendEsc();
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleEscConfirmClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showEscConfirm, escConfirmFocus, handleEscConfirmClose, handleSendEsc]);
+
+  // 显示ESC确认弹窗时重置焦点
+  useEffect(() => {
+    if (showEscConfirm) {
+      setEscConfirmFocus('continue');
+    }
+  }, [showEscConfirm]);
 
   // 调整终端尺寸
   const resizeTerminal = useCallback(() => {
@@ -349,34 +396,39 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
 
         {/* ESC 确认弹窗 */}
         {showEscConfirm && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-dark-800 border border-dark-600 rounded-lg shadow-2xl p-4 z-50 min-w-[280px]">
+          <div
+            ref={escConfirmRef}
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-dark-800 border border-dark-600 rounded-lg shadow-2xl p-4 z-50 min-w-[280px]"
+          >
             <p className="text-sm text-dark-100 mb-3">检测到 ESC 键，是否发送到终端？</p>
             <p className="text-xs text-dark-500 mb-3">ESC 可能中断当前 Claude Code 正在执行的任务</p>
             <div className="flex gap-2">
               <button
-                onClick={() => {
-                  setShowEscConfirm(false);
-                  if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
-                  // 恢复终端焦点
-                  xtermRef.current?.focus();
-                }}
-                className="flex-1 px-3 py-1.5 bg-dark-700 text-dark-200 rounded text-xs hover:bg-dark-600 transition-colors"
+                onClick={handleEscConfirmClose}
+                className={`flex-1 px-3 py-1.5 rounded text-xs transition-colors ${
+                  escConfirmFocus === 'continue'
+                    ? 'bg-accent-primary text-dark-900 ring-2 ring-accent-primary ring-offset-2 ring-offset-dark-800'
+                    : 'bg-dark-700 text-dark-200 hover:bg-dark-600'
+                }`}
               >
                 继续工作
+                <span className="ml-1 text-dark-400 text-[10px]">←</span>
               </button>
               <button
-                onClick={() => {
-                  window.electronAPI.sendInput(session.id, '\x1b');
-                  setShowEscConfirm(false);
-                  if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
-                  // 恢复终端焦点
-                  xtermRef.current?.focus();
-                }}
-                className="flex-1 px-3 py-1.5 bg-accent-danger text-white rounded text-xs hover:bg-red-500 transition-colors"
+                onClick={handleSendEsc}
+                className={`flex-1 px-3 py-1.5 rounded text-xs transition-colors ${
+                  escConfirmFocus === 'send'
+                    ? 'bg-accent-danger text-white ring-2 ring-accent-danger ring-offset-2 ring-offset-dark-800'
+                    : 'bg-red-600/80 text-white hover:bg-red-500'
+                }`}
               >
                 发送 ESC
+                <span className="ml-1 text-dark-200 text-[10px]">→</span>
               </button>
             </div>
+            <p className="text-xs text-dark-600 mt-2 text-center">
+              ← → 选择 · Enter 确认 · Esc 取消
+            </p>
           </div>
         )}
       </div>

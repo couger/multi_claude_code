@@ -48,6 +48,9 @@ export const IPC_CHANNELS = {
   SESSION_CLOSED: 'session:closed',
   ALERT: 'alert:trigger',
 
+  // 外部进程检测
+  CHECK_EXTERNAL_CLAUDE: 'external:checkClaude',
+
   // 批量操作响应
   BATCH_OPERATION_STARTED: 'batch:started',
   BATCH_OPERATION_PROGRESS: 'batch:progress',

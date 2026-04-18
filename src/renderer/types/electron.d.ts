@@ -46,6 +46,9 @@ export interface ElectronAPI {
   addSessionToGroup: (groupId: string, sessionId: string) => Promise<any>;
   removeSessionFromGroup: (groupId: string, sessionId: string) => Promise<any>;
 
+  // 外部进程检测
+  checkExternalClaude: (workDir: string) => Promise<{ detected: boolean; warnings: string[]; details?: any }>;
+
   // 远程访问控制
   getRemoteStatus: () => Promise<{
     enabled: boolean;

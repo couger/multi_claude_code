@@ -94,6 +94,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addSessionToGroup: (groupId: string, sessionId: string) => ipcRenderer.invoke('group:addSession', { groupId, sessionId }),
   removeSessionFromGroup: (groupId: string, sessionId: string) => ipcRenderer.invoke('group:removeSession', { groupId, sessionId }),
 
+  // 外部进程检测
+  checkExternalClaude: (workDir: string) => ipcRenderer.invoke('external:checkClaude', workDir),
+
   // 远程访问控制
   getRemoteStatus: () => ipcRenderer.invoke('remote:getStatus'),
   setRemotePort: (port: number) => ipcRenderer.invoke('remote:setPort', port),

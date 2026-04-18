@@ -38,6 +38,7 @@ let selectedServerIPs = new Set<string>(); // 用户选择的服务器IP（用�
 let allowRemoteCreateSession = true; // 是否允许远程创建会话
 let maxRemoteConnections = 0; // 最大远程连接数（0 = 不限制）
 let minimizeToTrayOnClose = true; // 点击关闭按钮时最小化到托盘（默认开启）
+let hideToPrimary = false; // 隐藏到主显示器而非当前显示器
 
 // WebSocket 客户端追踪
 interface WsClientInfo {
@@ -199,15 +200,23 @@ function updateTrayMenu() {
       label: '一键贴边隐藏',
       click: () => {
         if (!mainWindow) return;
-        const displays = screen.getAllDisplays();
-        const cursorPos = screen.getCursorScreenPoint();
-        let targetDisplay = displays[0];
-        for (const display of displays) {
-          const { x, y, width, height } = display.bounds;
-          if (cursorPos.x >= x && cursorPos.x < x + width &&
-              cursorPos.y >= y && cursorPos.y < y + height) {
-            targetDisplay = display;
-            break;
+        let targetDisplay: Electron.Display;
+
+        if (hideToPrimary) {
+          // 使用主显示器
+          targetDisplay = screen.getPrimaryDisplay();
+        } else {
+          // 使用当前显示器（鼠标所在位置）
+          const displays = screen.getAllDisplays();
+          const cursorPos = screen.getCursorScreenPoint();
+          targetDisplay = displays[0];
+          for (const display of displays) {
+            const { x, y, width, height } = display.bounds;
+            if (cursorPos.x >= x && cursorPos.x < x + width &&
+                cursorPos.y >= y && cursorPos.y < y + height) {
+              targetDisplay = display;
+              break;
+            }
           }
         }
         windowManager?.hideToEdge('right', targetDisplay);
@@ -540,6 +549,11 @@ function initIPC() {
     return results;
   });
 
+  // 外部 Claude Code 检测
+  ipcMain.handle(IPC_CHANNELS.CHECK_EXTERNAL_CLAUDE, async (_: any, workDir: string) => {
+    return pm.checkExternalClaudeCode(workDir);
+  });
+
   // 性能监控处理
   ipcMain.handle(IPC_CHANNELS.GET_SYSTEM_METRICS, async () => {
     if (!performanceMonitor) {
@@ -763,6 +777,7 @@ function initIPC() {
       allowRemoteCreateSession,
       maxRemoteConnections,
       hideDirection: windowManager?.getHideDirection() ?? 'right',
+      hideToPrimary,
     };
   });
   ipcMain.on('settings:broadcastGeneral', (_event: any, settings: any) => {
@@ -780,6 +795,10 @@ function initIPC() {
     // 更新隐藏方向
     if (settings.hideDirection !== undefined && (settings.hideDirection === 'left' || settings.hideDirection === 'right')) {
       windowManager?.setHideDirection(settings.hideDirection);
+    }
+    // 更新隐藏目标显示器
+    if (settings.hideToPrimary !== undefined) {
+      hideToPrimary = settings.hideToPrimary;
     }
     // 持久化 defaultBrowseDir 到 config.json
     if (settings.defaultBrowseDir !== undefined) {
@@ -891,17 +910,22 @@ function initIPC() {
   ipcMain.on('window:hide-to-edge', () => {
     if (!mainWindow || !windowManager) return;
 
-    const displays = screen.getAllDisplays();
-    const cursorPos = screen.getCursorScreenPoint();
-
-    // 检测鼠标在哪个显示器上
-    let targetDisplay = displays[0];
-    for (const display of displays) {
-      const { x, y, width, height } = display.bounds;
-      if (cursorPos.x >= x && cursorPos.x < x + width &&
-          cursorPos.y >= y && cursorPos.y < y + height) {
-        targetDisplay = display;
-        break;
+    let targetDisplay: Electron.Display;
+    if (hideToPrimary) {
+      // 使用主显示器
+      targetDisplay = screen.getPrimaryDisplay();
+    } else {
+      // 使用当前显示器（鼠标所在位置）
+      const displays = screen.getAllDisplays();
+      const cursorPos = screen.getCursorScreenPoint();
+      targetDisplay = displays[0];
+      for (const display of displays) {
+        const { x, y, width, height } = display.bounds;
+        if (cursorPos.x >= x && cursorPos.x < x + width &&
+            cursorPos.y >= y && cursorPos.y < y + height) {
+          targetDisplay = display;
+          break;
+        }
       }
     }
 

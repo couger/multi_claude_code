@@ -31,6 +31,7 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
   const [customArgs, setCustomArgs] = useState('');
   const [lastArgs, setLastArgs] = useState('');
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
+  const [externalWarnings, setExternalWarnings] = useState<string[]>([]);
   const sessions = useSessionStore((state) => state.sessions);
 
   // 从路径生成会话名称
@@ -75,6 +76,7 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
       setUseLastDir(true);
       setSelectedPresets(new Set());
       setCustomArgs('');
+      setExternalWarnings([]);
     }
   }, [visible]);
 
@@ -121,11 +123,27 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
       if (selected) {
         setWorkDir(selected);
         setUseLastDir(false);
+        // 检测外部 Claude Code
+        if (window.electronAPI?.checkExternalClaude) {
+          const result = await window.electronAPI.checkExternalClaude(selected);
+          setExternalWarnings(result.warnings);
+        }
       }
     } catch (e) {
       console.error('选择目录失败:', e);
     }
   }, []);
+
+  // 当工作目录变化时检测外部进程
+  useEffect(() => {
+    if (visible && workDir && window.electronAPI?.checkExternalClaude) {
+      window.electronAPI.checkExternalClaude(workDir).then(result => {
+        setExternalWarnings(result.warnings);
+      }).catch(() => {
+        setExternalWarnings([]);
+      });
+    }
+  }, [visible, workDir]);
 
   // 创建会话
   const handleCreate = useCallback(async () => {
@@ -301,6 +319,22 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
                 >
                   浏览...
                 </button>
+              </div>
+            )}
+
+            {/* 外部进程警告 */}
+            {externalWarnings.length > 0 && (
+              <div className="ml-6 p-2 bg-yellow-600/10 border border-yellow-600/30 rounded">
+                <div className="flex items-start gap-2">
+                  <span className="text-yellow-500 text-sm">⚠️</span>
+                  <div className="flex-1">
+                    <div className="text-xs text-yellow-400 font-medium mb-1">检测到外部 Claude Code 进程</div>
+                    {externalWarnings.map((warning, idx) => (
+                      <div key={idx} className="text-xs text-yellow-500/80">• {warning}</div>
+                    ))}
+                    <div className="text-xs text-yellow-500/60 mt-1">目录可能被其他进程占用，请谨慎操作</div>
+                  </div>
+                </div>
               </div>
             )}
           </div>

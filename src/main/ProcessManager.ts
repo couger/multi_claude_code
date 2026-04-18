@@ -70,6 +70,90 @@ class ProcessManager {
   }
 
   /**
+   * 检测外部 Claude Code 进程
+   * 返回检测到的外部进程信息
+   */
+  async checkExternalClaudeCode(workDir: string): Promise<{ detected: boolean; warnings: string[]; details?: any }> {
+    const warnings: string[] = [];
+    let detected = false;
+    const details: any = {};
+
+    try {
+      // 1. 检查 .claude 目录和锁文件
+      const claudeDir = path.join(workDir, '.claude');
+      if (fs.existsSync(claudeDir)) {
+        // 检查是否有锁文件或状态文件
+        const lockFiles = ['CLAUDE.md', 'settings.json', 'statsig_user_metadata.json'];
+        const foundFiles: string[] = [];
+        for (const file of lockFiles) {
+          const filePath = path.join(claudeDir, file);
+          if (fs.existsSync(filePath)) {
+            foundFiles.push(file);
+          }
+        }
+        if (foundFiles.length > 0) {
+          warnings.push(`发现 .claude 目录中存在配置文件: ${foundFiles.join(', ')}`);
+          details.claudeDir = foundFiles;
+          detected = true;
+        }
+      }
+
+      // 2. 检查进程列表（仅在有权限时）
+      if (process.platform === 'win32') {
+        try {
+          const { execSync } = require('child_process');
+          // 使用 tasklist 查找 claude 进程
+          const output = execSync('tasklist /FI "IMAGENAME eq claude.exe" /FO CSV', { encoding: 'utf8' });
+          const lines = output.split('\n').filter((l: string) => l.trim());
+          if (lines.length > 1) {
+            // 有进程在运行（跳过标题行）
+            const procCount = lines.length - 1;
+            warnings.push(`检测到 ${procCount} 个 Claude.exe 进程正在运行`);
+            details.claudeProcesses = procCount;
+            detected = true;
+          }
+        } catch {
+          // 无权限或命令失败，忽略
+        }
+      } else {
+        // Unix/macOS: 使用 ps 命令
+        try {
+          const { execSync } = require('child_process');
+          const output = execSync('pgrep -f "claude" || true', { encoding: 'utf8' });
+          const pids = output.trim().split('\n').filter((p: string) => p && !p.includes('claude-code-manager'));
+          if (pids.length > 0) {
+            warnings.push(`检测到 ${pids.length} 个 Claude 相关进程正在运行 (PID: ${pids.slice(0, 3).join(', ')}${pids.length > 3 ? '...' : ''})`);
+            details.claudeProcesses = pids.length;
+            details.pids = pids.slice(0, 5);
+            detected = true;
+          }
+        } catch {
+          // 无权限或命令失败，忽略
+        }
+      }
+
+      // 3. 检查工作目录是否被锁定（简单检测）
+      try {
+        const testFile = path.join(workDir, '.claude_lock_test');
+        const fd = fs.openSync(testFile, 'wx');
+        fs.closeSync(fd);
+        fs.unlinkSync(testFile);
+      } catch (e: any) {
+        if (e.code === 'EACCES' || e.code === 'EPERM') {
+          warnings.push('工作目录可能被其他进程锁定');
+          details.dirLocked = true;
+          detected = true;
+        }
+      }
+
+    } catch (e) {
+      console.error('检测外部 Claude Code 进程失败:', e);
+    }
+
+    return { detected, warnings, details: Object.keys(details).length > 0 ? details : undefined };
+  }
+
+  /**
    * 创建新的 CLI 会话
    */
   async createSession(options: any = {}) {
