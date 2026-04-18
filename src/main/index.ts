@@ -26,17 +26,6 @@ let processManager: ProcessManager | null = null;
 let performanceMonitor: PerformanceMonitor | null = null;
 let groupManager: GroupManager | null = null;
 let tray: Tray | null = null;
-let isWindowHidden = false; // 窗口是否处于隐藏状态（收起状态）
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-let isManuallyHidden = false; // 手动一键隐藏标志
-let windowAutoHideEnabled = true;
-let hideDirection: 'left' | 'right' | 'bottom' | 'top' = 'right'; // 隐藏方向：默认右侧
-let autoHideTimer: ReturnType<typeof setTimeout> | null = null; // 自动隐藏定时器
-let autoHideDelayTimer: ReturnType<typeof setTimeout> | null = null; // 延迟收起定时器
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-let isWindowRestored = false; // 窗口是否处于滑出状态
-let currentHandleSize = 10; // 把手大小（像素）
-let isProgrammaticMove = false; // 标记是否为程序控制的窗口移动（防止 move 事件干扰）
 
 // HTTP/WebSocket 服务器相关变量
 let httpServer: Server | null = null;
@@ -58,12 +47,6 @@ interface WsClientInfo {
   id: string;
 }
 let wsClients: Map<string, WsClientInfo> = new Map();
-
-// 滑出时的窗口尺寸（从边缘滑出的大小）
-const RESTORE_SIZE = {
-  width: 500,  // 滑出时窗口宽度
-  height: 600, // 滑出时窗口高度
-};
 
 // 确保窗口在可见屏幕范围内
 function ensureWindowVisible() {
@@ -93,13 +76,10 @@ function ensureWindowVisible() {
     const newX = primary.workArea.x + Math.floor((sw - newWidth) / 2);
     const newY = primary.workArea.y + Math.floor((sh - newHeight) / 2);
 
-    // 清除隐藏状态
-    isWindowHidden = false;
-    isManuallyHidden = false;
-    isWindowRestored = false;
-    mainWindow.setSkipTaskbar(false);
-    mainWindow.setAlwaysOnTop(false);
-    mainWindow.setResizable(true);
+    // 重置隐藏状态
+    if (windowManager) {
+      windowManager.resetHiddenState();
+    }
 
     mainWindow.setBounds({ x: newX, y: newY, width: newWidth, height: newHeight });
     mainWindow.show();
@@ -146,10 +126,11 @@ function createTray() {
   // 左键点击切换窗口可见性
   tray.on('click', () => {
     if (!mainWindow) return;
+    const isWindowHidden = windowManager?.isHidden() ?? false;
     if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
       // 窗口可见时：如果隐藏状态则恢复，否则最小化到托盘
       if (isWindowHidden) {
-        restoreWindow();
+        windowManager?.restore();
         mainWindow.focus();
       } else {
         mainWindow.hide();
@@ -177,7 +158,7 @@ function updateTrayMenu() {
         .filter((s: any) => s.status === SessionStatus.RUNNING).length
     : 0;
 
-  const isVisible = mainWindow?.isVisible() && !mainWindow?.isMinimized() && !isWindowHidden;
+  const isVisible = mainWindow?.isVisible() && !mainWindow?.isMinimized() && !(windowManager?.isHidden() ?? false);
   const openAtLogin = app.getLoginItemSettings().openAtLogin;
 
   const contextMenu = Menu.buildFromTemplate([
@@ -189,7 +170,9 @@ function updateTrayMenu() {
           mainWindow.hide();
         } else {
           ensureWindowVisible();
-          if (isWindowHidden) restoreWindow();
+          if (windowManager?.isHidden()) {
+            windowManager.restore();
+          }
           if (mainWindow.isMinimized()) mainWindow.restore();
           mainWindow.show();
           mainWindow.focus();
@@ -227,7 +210,7 @@ function updateTrayMenu() {
             break;
           }
         }
-        hideWindowToEdge(targetDisplay, 'right');
+        windowManager?.hideToEdge('right', targetDisplay);
         updateTrayMenu();
       },
     },
@@ -287,137 +270,16 @@ function updateTrayMenu() {
   tray.setContextMenu(contextMenu);
 }
 
-// 将窗口隐藏到屏幕边缘
+// 将窗口隐藏到屏幕边缘（使用 WindowManager）
 function hideWindowToEdge(targetDisplay: any, direction: string) {
-  if (!mainWindow) return;
-
-  const currentBounds = mainWindow.getBounds();
-  // 只在窗口不是隐藏状态时保存原始尺寸
-  if (!isWindowHidden) {
-    // 保存当前尺寸用于恢复
-  }
-
-  isWindowHidden = true;
-  isManuallyHidden = true;
-  isWindowRestored = false;
-  hideDirection = direction as 'left' | 'right' | 'bottom' | 'top';
-
-  let newBounds;
-
-  if (direction === 'right') {
-    // 隐藏到右边缘，只留 10px 把手
-    newBounds = {
-      x: Math.round(targetDisplay.bounds.x + targetDisplay.bounds.width - currentHandleSize),
-      y: Math.round(targetDisplay.bounds.y + (targetDisplay.bounds.height - currentBounds.height) / 2),
-      width: Math.round(currentHandleSize),
-      height: Math.round(currentBounds.height),
-    };
-  } else if (direction === 'left') {
-    // 隐藏到左边缘
-    newBounds = {
-      x: Math.round(targetDisplay.bounds.x),
-      y: Math.round(targetDisplay.bounds.y + (targetDisplay.bounds.height - currentBounds.height) / 2),
-      width: Math.round(currentHandleSize),
-      height: Math.round(currentBounds.height),
-    };
-  } else if (direction === 'bottom') {
-    // 隐藏到底部边缘
-    newBounds = {
-      x: Math.round(targetDisplay.bounds.x + (targetDisplay.bounds.width - currentBounds.width) / 2),
-      y: Math.round(targetDisplay.bounds.y + targetDisplay.bounds.height - currentHandleSize),
-      width: Math.round(currentBounds.width),
-      height: Math.round(currentHandleSize),
-    };
-  } else if (direction === 'top') {
-    // 隐藏到顶部边缘
-    newBounds = {
-      x: Math.round(targetDisplay.bounds.x + (targetDisplay.bounds.width - currentBounds.width) / 2),
-      y: Math.round(targetDisplay.bounds.y),
-      width: Math.round(currentBounds.width),
-      height: Math.round(currentHandleSize),
-    };
-  }
-
-  if (!newBounds) return; // 安全保护
-
-  isProgrammaticMove = true;
-  mainWindow.setBounds(newBounds);
-  mainWindow.setResizable(false); // 禁用系统调整大小，让我们处理鼠标事件
-  mainWindow.setIgnoreMouseEvents(false); // 确保窗口接收鼠标事件
-  mainWindow.setSkipTaskbar(true);
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
-  isProgrammaticMove = false;
+  if (!windowManager) return;
+  windowManager.hideToEdge(direction as 'left' | 'right' | 'bottom' | 'top', targetDisplay);
 }
 
-// 点击隐藏窗口时恢复（预留函数，暂不使用）
-// function restoreWindowOnClick() {
-//   if (!mainWindow || !isWindowHidden) return;
-//   restoreWindow();
-// }
-
-// 恢复窗口到滑出尺寸
+// 恢复窗口（使用 WindowManager）
 function restoreWindow() {
-  if (!mainWindow || !isWindowHidden) return;
-
-  // 清除定时器
-  if (autoHideTimer) {
-    clearTimeout(autoHideTimer);
-    autoHideTimer = null;
-  }
-
-  isWindowHidden = false;
-  isWindowRestored = true;
-  isManuallyHidden = false;
-  mainWindow.setSkipTaskbar(false);
-  mainWindow.setAlwaysOnTop(false);
-  mainWindow.setResizable(true); // 恢复时启用调整大小
-
-  // 恢复到滑出尺寸
-  const display = require('electron').screen.getDisplayNearestPoint(mainWindow.getBounds());
-  const currentBounds = mainWindow.getBounds();
-  let restoreBounds;
-
-  if (hideDirection === 'right') {
-    restoreBounds = {
-      x: Math.round(display.bounds.x + display.bounds.width - RESTORE_SIZE.width - 4),
-      y: Math.round(currentBounds.y), // 保持当前 y 位置
-      width: Math.round(RESTORE_SIZE.width),
-      height: Math.round(currentBounds.height), // 保持当前高度
-    };
-  } else if (hideDirection === 'left') {
-    restoreBounds = {
-      x: Math.round(display.bounds.x + 4),
-      y: Math.round(currentBounds.y),
-      width: Math.round(RESTORE_SIZE.width),
-      height: Math.round(currentBounds.height),
-    };
-  } else if (hideDirection === 'bottom') {
-    restoreBounds = {
-      x: Math.round(currentBounds.x),
-      y: Math.round(display.bounds.y + display.bounds.height - RESTORE_SIZE.height - 4),
-      width: Math.round(currentBounds.width),
-      height: Math.round(RESTORE_SIZE.height),
-    };
-  } else if (hideDirection === 'top') {
-    restoreBounds = {
-      x: Math.round(currentBounds.x),
-      y: Math.round(display.bounds.y + 4),
-      width: Math.round(currentBounds.width),
-      height: Math.round(RESTORE_SIZE.height),
-    };
-  } else {
-    // 默认右侧
-    restoreBounds = {
-      x: Math.round(display.bounds.x + display.bounds.width - RESTORE_SIZE.width - 4),
-      y: Math.round(currentBounds.y),
-      width: Math.round(RESTORE_SIZE.width),
-      height: Math.round(currentBounds.height),
-    };
-  }
-
-  isProgrammaticMove = true;
-  mainWindow.setBounds(restoreBounds);
-  isProgrammaticMove = false;
+  if (!windowManager) return;
+  windowManager.restore();
 }
 
 // 导出 sendToRenderer 供 ProcessManager 使用
@@ -900,7 +762,7 @@ function initIPC() {
     return {
       allowRemoteCreateSession,
       maxRemoteConnections,
-      hideDirection,
+      hideDirection: windowManager?.getHideDirection() ?? 'right',
     };
   });
   ipcMain.on('settings:broadcastGeneral', (_event: any, settings: any) => {
@@ -917,7 +779,7 @@ function initIPC() {
     }
     // 更新隐藏方向
     if (settings.hideDirection !== undefined && (settings.hideDirection === 'left' || settings.hideDirection === 'right')) {
-      hideDirection = settings.hideDirection;
+      windowManager?.setHideDirection(settings.hideDirection);
     }
     // 持久化 defaultBrowseDir 到 config.json
     if (settings.defaultBrowseDir !== undefined) {
@@ -946,7 +808,7 @@ function initIPC() {
       ...settings,
       allowRemoteCreateSession,
       maxRemoteConnections,
-      hideDirection,
+      hideDirection: windowManager?.getHideDirection() ?? 'right',
     } });
   });
 
@@ -1012,12 +874,10 @@ function initIPC() {
 
   // 窗口贴边隐藏切换
   ipcMain.on('window:toggle-auto-hide', () => {
-    if (!mainWindow) return;
-    windowAutoHideEnabled = !windowAutoHideEnabled;
-    if (!windowAutoHideEnabled && isWindowHidden) {
-      isWindowHidden = false;
-      mainWindow.setSkipTaskbar(false);
-      mainWindow.setAlwaysOnTop(false);
+    if (!mainWindow || !windowManager) return;
+    windowManager.toggleAutoHide();
+    if (!windowManager.isAutoHideEnabled() && windowManager.isHidden()) {
+      windowManager.resetHiddenState();
       // 恢复窗口大小
       mainWindow.setBounds({
         ...mainWindow.getBounds(),
@@ -1029,10 +889,10 @@ function initIPC() {
 
   // 一键贴边隐藏（手动触发）
   ipcMain.on('window:hide-to-edge', () => {
-    if (!mainWindow) return;
+    if (!mainWindow || !windowManager) return;
 
-    const displays = require('electron').screen.getAllDisplays();
-    const cursorPos = require('electron').screen.getCursorScreenPoint();
+    const displays = screen.getAllDisplays();
+    const cursorPos = screen.getCursorScreenPoint();
 
     // 检测鼠标在哪个显示器上
     let targetDisplay = displays[0];
@@ -1045,42 +905,26 @@ function initIPC() {
       }
     }
 
-    // 使用统一的隐藏函数
-    hideWindowToEdge(targetDisplay, 'right');
+    // 使用 WindowManager 隐藏
+    windowManager.hideToEdge('right', targetDisplay);
   });
 
   // 恢复窗口
   ipcMain.on('window:restore-window', () => {
-    if (!mainWindow || !isWindowHidden) return;
-
-    // 清除定时器
-    if (autoHideDelayTimer) {
-      clearTimeout(autoHideDelayTimer);
-      autoHideDelayTimer = null;
-    }
-
-    restoreWindow();
+    if (!mainWindow || !windowManager || !windowManager.isHidden()) return;
+    windowManager.restore();
   });
 
   // 窗口位置变化时自动恢复（从隐藏状态）
-  // 注意：仅当用户手动拖动窗口时才恢复，程序控制的移动（贴边/恢复）通过 isProgrammaticMove 标记跳过
   mainWindow?.on('move', () => {
-    if (isProgrammaticMove) return; // 跳过程序控制的移动
-    if (isWindowHidden && mainWindow) {
-      isWindowHidden = false;
-      isManuallyHidden = false;
-      isWindowRestored = false;
-      mainWindow.setSkipTaskbar(false);
-      mainWindow.setAlwaysOnTop(false);
-      mainWindow.setResizable(true);
-    }
+    if (!windowManager) return;
+    windowManager.handleWindowMove();
   });
 
   // 窗口点击事件 - 隐藏状态下点击窗口可恢复
   mainWindow?.on('focus', () => {
-    if (isWindowHidden) {
-      restoreWindow();
-    }
+    if (!windowManager) return;
+    windowManager.handleWindowFocus();
   });
 }
 
@@ -1776,8 +1620,8 @@ if (!gotTheLock) {
     // 用户尝试启动第二个实例时，聚焦到已有窗口
     if (mainWindow) {
       ensureWindowVisible();
-      if (isWindowHidden) {
-        restoreWindow();
+      if (windowManager?.isHidden()) {
+        windowManager.restore();
       }
       if (mainWindow.isMinimized()) {
         mainWindow.restore();

@@ -77,6 +77,41 @@ export class WindowManager {
   }
 
   /**
+   * 窗口是否隐藏
+   */
+  isHidden(): boolean {
+    return this.state.isWindowHidden;
+  }
+
+  /**
+   * 窗口是否已恢复（滑出状态）
+   */
+  isRestored(): boolean {
+    return this.state.isWindowRestored;
+  }
+
+  /**
+   * 自动隐藏是否启用
+   */
+  isAutoHideEnabled(): boolean {
+    return this.state.windowAutoHideEnabled;
+  }
+
+  /**
+   * 获取隐藏方向
+   */
+  getHideDirection(): HideDirection {
+    return this.state.hideDirection;
+  }
+
+  /**
+   * 设置隐藏方向
+   */
+  setHideDirection(direction: HideDirection): void {
+    this.state.hideDirection = direction;
+  }
+
+  /**
    * 设置窗口自动隐藏功能开关
    */
   setAutoHideEnabled(enabled: boolean): void {
@@ -93,11 +128,11 @@ export class WindowManager {
   /**
    * 将窗口隐藏到屏幕边缘
    */
-  hideToEdge(direction: HideDirection = 'right'): void {
+  hideToEdge(direction: HideDirection = 'right', targetDisplay?: Electron.Display): void {
     if (!this.mainWindow) return;
 
     const currentBounds = this.mainWindow.getBounds();
-    const targetDisplay = screen.getDisplayNearestPoint(this.mainWindow.getBounds());
+    const display = targetDisplay || screen.getDisplayNearestPoint(this.mainWindow.getBounds());
 
     this.state.isWindowHidden = true;
     this.state.isManuallyHidden = true;
@@ -110,32 +145,32 @@ export class WindowManager {
     if (direction === 'right') {
       // 隐藏到右边缘，只留把手大小
       newBounds = {
-        x: Math.round(targetDisplay.bounds.x + targetDisplay.bounds.width - handleSize),
-        y: Math.round(targetDisplay.bounds.y + (targetDisplay.bounds.height - currentBounds.height) / 2),
+        x: Math.round(display.bounds.x + display.bounds.width - handleSize),
+        y: Math.round(display.bounds.y + (display.bounds.height - currentBounds.height) / 2),
         width: Math.round(handleSize),
         height: Math.round(currentBounds.height),
       };
     } else if (direction === 'left') {
       // 隐藏到左边缘
       newBounds = {
-        x: Math.round(targetDisplay.bounds.x),
-        y: Math.round(targetDisplay.bounds.y + (targetDisplay.bounds.height - currentBounds.height) / 2),
+        x: Math.round(display.bounds.x),
+        y: Math.round(display.bounds.y + (display.bounds.height - currentBounds.height) / 2),
         width: Math.round(handleSize),
         height: Math.round(currentBounds.height),
       };
     } else if (direction === 'bottom') {
       // 隐藏到底部边缘
       newBounds = {
-        x: Math.round(targetDisplay.bounds.x + (targetDisplay.bounds.width - currentBounds.width) / 2),
-        y: Math.round(targetDisplay.bounds.y + targetDisplay.bounds.height - handleSize),
+        x: Math.round(display.bounds.x + (display.bounds.width - currentBounds.width) / 2),
+        y: Math.round(display.bounds.y + display.bounds.height - handleSize),
         width: Math.round(currentBounds.width),
         height: Math.round(handleSize),
       };
     } else if (direction === 'top') {
       // 隐藏到顶部边缘
       newBounds = {
-        x: Math.round(targetDisplay.bounds.x + (targetDisplay.bounds.width - currentBounds.width) / 2),
-        y: Math.round(targetDisplay.bounds.y),
+        x: Math.round(display.bounds.x + (display.bounds.width - currentBounds.width) / 2),
+        y: Math.round(display.bounds.y),
         width: Math.round(currentBounds.width),
         height: Math.round(handleSize),
       };
@@ -444,6 +479,22 @@ export class WindowManager {
   handleWindowFocus(): void {
     if (this.state.isWindowHidden) {
       this.restore();
+    }
+  }
+
+  /**
+   * 重置隐藏状态（不执行恢复操作）
+   */
+  resetHiddenState(): void {
+    if (this.state.isWindowHidden) {
+      this.state.isWindowHidden = false;
+      this.state.isManuallyHidden = false;
+      this.state.isWindowRestored = false;
+      if (this.mainWindow) {
+        this.mainWindow.setSkipTaskbar(false);
+        this.mainWindow.setAlwaysOnTop(false);
+        this.mainWindow.setResizable(true);
+      }
     }
   }
 
