@@ -374,6 +374,57 @@ const AlertsTab: React.FC = () => {
         </button>
       </div>
 
+      {/* 外部 Claude Code 检测 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">外部 Claude Code 检测</label>
+        <div className="space-y-2">
+          {/* 基础检测 - 始终开启 */}
+          <div className="flex items-center justify-between p-2 bg-dark-900 rounded opacity-60">
+            <div className="flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 text-dark-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div>
+                <div className="text-xs text-dark-200">基础检测（路径覆盖）</div>
+                <div className="text-xs text-dark-500">检测工作目录是否与现有会话重叠</div>
+              </div>
+            </div>
+            <span className="text-xs text-dark-400 bg-dark-700 px-2 py-0.5 rounded">始终开启</span>
+          </div>
+
+          {/* 深度检测 - 可开关 */}
+          <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
+            <div className="flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 text-dark-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <div>
+                <div className="text-xs text-dark-200">深度检测</div>
+                <div className="text-xs text-dark-500">检测 .claude 目录和系统进程</div>
+              </div>
+            </div>
+            <button
+              onClick={() => updateAlertConfig({
+                externalDetection: {
+                  ...alertConfig.externalDetection,
+                  deep: !alertConfig.externalDetection?.deep,
+                },
+              })}
+              className={`relative w-10 h-5 rounded-full transition-colors ${
+                alertConfig.externalDetection?.deep ? 'bg-accent-primary' : 'bg-dark-600'
+              }`}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                alertConfig.externalDetection?.deep ? 'left-5' : 'left-0.5'
+              }`} />
+            </button>
+          </div>
+        </div>
+        <div className="text-xs text-dark-500">
+          深度检测可能需要系统权限，且无法检测所有启动方式
+        </div>
+      </div>
+
       {/* 告警分级与过滤 */}
       <div className="space-y-2">
         <label className="text-xs text-dark-400">告警分级与过滤</label>

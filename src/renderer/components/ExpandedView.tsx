@@ -167,6 +167,8 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
         if (data === '\x1b' || data === '\x1b\x1b') {
           // ESC 键被按下，显示确认对话框
           setShowEscConfirm(true);
+          // 让终端失去焦点，确保弹窗能接收键盘事件
+          terminal.blur();
           if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
           escConfirmTimerRef.current = setTimeout(() => setShowEscConfirm(false), 5000);
           return;

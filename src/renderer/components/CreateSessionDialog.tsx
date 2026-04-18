@@ -33,6 +33,7 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
   const [externalWarnings, setExternalWarnings] = useState<string[]>([]);
   const sessions = useSessionStore((state) => state.sessions);
+  const alertConfig = useSessionStore((state) => state.alertConfig);
 
   // 从路径生成会话名称
   const generateSessionName = useCallback((path: string): string => {
@@ -123,27 +124,31 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
       if (selected) {
         setWorkDir(selected);
         setUseLastDir(false);
-        // 检测外部 Claude Code
-        if (window.electronAPI?.checkExternalClaude) {
+        // 深度检测仅在开启时执行
+        if (alertConfig.externalDetection?.deep && window.electronAPI?.checkExternalClaude) {
           const result = await window.electronAPI.checkExternalClaude(selected);
           setExternalWarnings(result.warnings);
+        } else {
+          setExternalWarnings([]);
         }
       }
     } catch (e) {
       console.error('选择目录失败:', e);
     }
-  }, []);
+  }, [alertConfig.externalDetection?.deep]);
 
-  // 当工作目录变化时检测外部进程
+  // 当工作目录变化时检测外部进程（仅深度检测）
   useEffect(() => {
-    if (visible && workDir && window.electronAPI?.checkExternalClaude) {
+    if (visible && workDir && alertConfig.externalDetection?.deep && window.electronAPI?.checkExternalClaude) {
       window.electronAPI.checkExternalClaude(workDir).then(result => {
         setExternalWarnings(result.warnings);
       }).catch(() => {
         setExternalWarnings([]);
       });
+    } else {
+      setExternalWarnings([]);
     }
-  }, [visible, workDir]);
+  }, [visible, workDir, alertConfig.externalDetection?.deep]);
 
   // 创建会话
   const handleCreate = useCallback(async () => {

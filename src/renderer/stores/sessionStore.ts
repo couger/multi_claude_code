@@ -31,6 +31,11 @@ export interface AlertRule {
 export interface AlertConfig {
   rules: AlertRule[];
   silentMode: boolean;
+  // 外部检测配置
+  externalDetection: {
+    basic: boolean; // 基础检测（路径覆盖）- 始终开启
+    deep: boolean; // 深度检测（.claude目录、进程检查）- 默认关闭
+  };
 }
 
 export interface OutputChunk {
@@ -84,6 +89,10 @@ export const useSessionStore = create<SessionStore>((set) => ({
       { type: AlertType.TASK_COMPLETE, enabled: true, notifyMode: AlertNotifyMode.WEAK },
     ],
     silentMode: false,
+    externalDetection: {
+      basic: true, // 基础检测始终开启
+      deep: false, // 深度检测默认关闭
+    },
   },
 
   // 操作实现
