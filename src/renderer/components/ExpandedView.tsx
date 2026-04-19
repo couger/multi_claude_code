@@ -39,8 +39,10 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
     // 先关闭弹窗
     setShowEscConfirm(false);
     if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
-    // 直接发送ESC字符（不依赖焦点状态）
+
+    // 发送ESC字符
     window.electronAPI.sendInput(session.id, '\x1b');
+
     // 恢复终端焦点
     requestAnimationFrame(() => {
       xtermRef.current?.focus();
