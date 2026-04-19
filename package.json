@@ -1,15 +1,19 @@
 {
   "name": "claude-code-cli-manager",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "description": "管理多个 Claude Code CLI 窗口的桌面应用",
   "main": "dist-electron/main.js",
   "type": "commonjs",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json && vite build",
     "electron:dev": "vite",
-    "electron:build": "npm run build && electron-builder",
-    "start": "electron ."
+    "electron:build": "npm run build:electron && electron-builder",
+    "start": "electron .",
+    "lint": "eslint src --ext .ts,.tsx --report-unused-disable-directives",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
   },
   "dependencies": {
     "@types/ws": "^8.18.1",
@@ -28,9 +32,14 @@
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@types/uuid": "^9.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
     "@vitejs/plugin-react": "^4.2.0",
     "autoprefixer": "^10.4.0",
     "electron-builder": "^24.0.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react": "^7.34.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.0",

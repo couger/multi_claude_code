@@ -32,7 +32,7 @@ let httpServer: Server | null = null;
 let wss: WebSocketServer | null = null;
 let httpPort = 8888;
 let httpAccessToken = '';
-let allowedIPs = new Set<string>();
+const allowedIPs = new Set<string>();
 let httpServerEnabled = false; // Web 访问开关（默认关闭）
 let selectedServerIPs = new Set<string>(); // 用户选择的服务器IP（用于访问控制）
 let allowRemoteCreateSession = true; // 是否允许远程创建会话
@@ -47,7 +47,7 @@ interface WsClientInfo {
   connectedAt: Date;
   id: string;
 }
-let wsClients: Map<string, WsClientInfo> = new Map();
+const wsClients: Map<string, WsClientInfo> = new Map();
 
 // 确保窗口在可见屏幕范围内
 function ensureWindowVisible() {

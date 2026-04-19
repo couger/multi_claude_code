@@ -23,9 +23,18 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.env.*.local
 
 # Claude Code Manager data
 .claude-code-manager/
 
 # TypeScript cache
 *.tsbuildinfo
+
+# Secrets - NEVER COMMIT THESE
+*.pem
+*.key
+secrets.json
+credentials.json
+.anthropic*
+.claude*
