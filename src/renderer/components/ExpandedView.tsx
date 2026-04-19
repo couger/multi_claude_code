@@ -36,9 +36,16 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
 
   // 处理发送ESC
   const handleSendEsc = useCallback(() => {
+    // 先关闭弹窗
+    setShowEscConfirm(false);
+    if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
+    // 直接发送ESC字符（不依赖焦点状态）
     window.electronAPI.sendInput(session.id, '\x1b');
-    handleEscConfirmClose();
-  }, [session.id, handleEscConfirmClose]);
+    // 恢复终端焦点
+    requestAnimationFrame(() => {
+      xtermRef.current?.focus();
+    });
+  }, [session.id]);
 
   // ESC确认弹窗键盘导航
   useEffect(() => {
