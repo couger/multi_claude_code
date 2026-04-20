@@ -308,6 +308,10 @@ export class WindowManager {
     const edgeThreshold = this.config.edgeThreshold;
 
     const checkWindowPosition = () => {
+      if (!this.mainWindow || !this.state.windowAutoHideEnabled) {
+        // 窗口已销毁或自动隐藏已停用，停止轮询
+        return;
+      }
       if (!this.mainWindow) {
         setTimeout(checkWindowPosition, checkInterval);
         return;
@@ -358,7 +362,14 @@ export class WindowManager {
 
     // 监听鼠标位置，控制窗口的展开/收起
     const checkMousePosition = () => {
-      if (!this.mainWindow || this.mainWindow.isMinimized()) return;
+      if (!this.mainWindow || !this.state.windowAutoHideEnabled) {
+        // 窗口已销毁或自动隐藏已停用，停止轮询
+        return;
+      }
+      if (this.mainWindow.isMinimized()) {
+        setTimeout(checkMousePosition, 100);
+        return;
+      }
 
       const cursor = screen.getCursorScreenPoint();
       const display = screen.getDisplayNearestPoint(cursor);
@@ -513,10 +524,11 @@ export class WindowManager {
   }
 
   /**
-   * 清理资源
+   * 清理资源 — 停止所有轮询循环
    */
   cleanup(): void {
     this.clearTimers();
+    this.state.windowAutoHideEnabled = false; // 停止递归循环
     this.mainWindow = null;
   }
 }

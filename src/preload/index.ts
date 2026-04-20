@@ -4,9 +4,8 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-// IPC通道常量定义（与主进程constants.ts保持一致）
+// IPC通道常量 — 从 shared 统一导出（编译后路径）
 const IPC_CHANNELS = {
-  // 渲染进程 -> 主进程
   CREATE_SESSION: 'session:create',
   KILL_SESSION: 'session:kill',
   GET_SESSIONS: 'session:list',
@@ -18,13 +17,51 @@ const IPC_CHANNELS = {
   WINDOW_MAXIMIZE: 'window:maximizeForSession',
   WINDOW_UNMAXIMIZE: 'window:unmaximizeForSession',
 
-  // 主进程 -> 渲染进程
   SESSION_CREATED: 'session:created',
   SESSION_OUTPUT: 'session:outputChunk',
   SESSION_STATUS: 'session:status',
   SESSION_CLOSED: 'session:closed',
   ALERT: 'alert:trigger',
+  TRAY_CREATE_SESSION: 'tray:create-session',
 };
+
+/**
+ * 多监听器管理 — 支持同一频道注册多个回调，清理时只移除自己的
+ */
+const listenerRegistry = new Map<string, Set<(data: any) => void>>();
+
+function registerListener(channel: string, callback: (data: any) => void) {
+  // 首次注册该频道时，创建 ipcRenderer 监听器
+  if (!listenerRegistry.has(channel)) {
+    listenerRegistry.set(channel, new Set());
+    ipcRenderer.on(channel, (_event: any, data: any) => {
+      const callbacks = listenerRegistry.get(channel);
+      if (callbacks) {
+        for (const cb of callbacks) {
+          try { cb(data); } catch (e) { console.error(`Listener error on ${channel}:`, e); }
+        }
+      }
+    });
+  }
+  listenerRegistry.get(channel)!.add(callback);
+}
+
+function removeListener(channel: string, callback: (data: any) => void) {
+  const callbacks = listenerRegistry.get(channel);
+  if (callbacks) {
+    callbacks.delete(callback);
+    // 如果该频道没有回调了，移除 ipcRenderer 监听器
+    if (callbacks.size === 0) {
+      listenerRegistry.delete(channel);
+      ipcRenderer.removeAllListeners(channel);
+    }
+  }
+}
+
+function removeAllListenersForChannel(channel: string) {
+  listenerRegistry.delete(channel);
+  ipcRenderer.removeAllListeners(channel);
+}
 
 // 暴露给渲染进程的 API
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -50,31 +87,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
   hideWindowToEdge: () => ipcRenderer.send('window:hide-to-edge'),
   restoreWindow: () => ipcRenderer.send('window:restore-window'),
 
-  // 事件监听
+  // 事件监听 — 支持多回调，不会互相覆盖
   onSessionCreated: (callback: (data: any) => void) => {
-    ipcRenderer.on(IPC_CHANNELS.SESSION_CREATED, (_event: any, data: any) => callback(data));
+    registerListener(IPC_CHANNELS.SESSION_CREATED, callback);
   },
   onSessionOutput: (callback: (data: any) => void) => {
-    ipcRenderer.on(IPC_CHANNELS.SESSION_OUTPUT, (_event: any, data: any) => callback(data));
+    registerListener(IPC_CHANNELS.SESSION_OUTPUT, callback);
   },
   onSessionStatus: (callback: (data: any) => void) => {
-    ipcRenderer.on(IPC_CHANNELS.SESSION_STATUS, (_event: any, data: any) => callback(data));
+    registerListener(IPC_CHANNELS.SESSION_STATUS, callback);
   },
   onSessionClosed: (callback: (data: any) => void) => {
-    ipcRenderer.on(IPC_CHANNELS.SESSION_CLOSED, (_event: any, data: any) => callback(data));
+    registerListener(IPC_CHANNELS.SESSION_CLOSED, callback);
   },
   onAlert: (callback: (data: any) => void) => {
-    ipcRenderer.on(IPC_CHANNELS.ALERT, (_event: any, data: any) => callback(data));
+    registerListener(IPC_CHANNELS.ALERT, callback);
   },
-
-  // 移除监听
-  removeAllListeners: (channel: string) => {
-    ipcRenderer.removeAllListeners(channel);
-  },
-
-  // 托盘事件
   onTrayCreateSession: (callback: () => void) => {
-    ipcRenderer.on('tray:create-session', () => callback());
+    registerListener(IPC_CHANNELS.TRAY_CREATE_SESSION, callback as (data: any) => void);
+  },
+
+  // 移除特定回调
+  removeListener: (channel: string, callback: (data: any) => void) => {
+    removeListener(channel, callback);
+  },
+
+  // 移除某个频道的所有回调
+  removeAllListeners: (channel: string) => {
+    removeAllListenersForChannel(channel);
   },
 
   // 标记 Electron 环境
@@ -110,7 +150,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   broadcastGeneralSettings: (settings: any) => ipcRenderer.send('settings:broadcastGeneral', settings),
 });
 
-// 鼠标进入/离开窗口事件 — 通过 DOM 事件检测并通知主进程
+// 鼠标进入/离开窗口事件
 document.addEventListener('mouseenter', () => {
   ipcRenderer.send('window:mouse-enter');
 });

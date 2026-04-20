@@ -169,10 +169,21 @@ export const useSessionStore = create<SessionStore>((set) => ({
   })),
 
   appendOutput: (sessionId, data) => set((state) => {
-    const newBuffers = new Map(state.outputBuffers);
-    const current = newBuffers.get(sessionId) || [];
-    newBuffers.set(sessionId, [...current, data].slice(-1000));
-    return { outputBuffers: newBuffers };
+    const current = state.outputBuffers.get(sessionId);
+    // Only keep last 200 chunks (reduced from 1000) — xterm handles its own scrollback
+    if (current) {
+      if (current.length >= 200) {
+        const newBuffers = new Map(state.outputBuffers);
+        newBuffers.set(sessionId, [...current.slice(-199), data]);
+        return { outputBuffers: newBuffers };
+      }
+      current.push(data);
+    } else {
+      const newBuffers = new Map(state.outputBuffers);
+      newBuffers.set(sessionId, [data]);
+      return { outputBuffers: newBuffers };
+    }
+    return state;
   }),
 
   clearOutput: (sessionId) => set((state) => {

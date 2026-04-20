@@ -293,7 +293,7 @@ class PerformanceMonitor {
           uptime: Date.now() - new Date(session.createdAt).getTime(),
           outputLines: 0,
           status: session.status,
-          lastActivity: session.lastActivity,
+          lastActivity: new Date(session.lastActivity) as any,
           timestamp: Date.now(),
         };
         

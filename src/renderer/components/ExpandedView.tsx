@@ -24,8 +24,8 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
   const escConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const escConfirmRef = useRef<HTMLDivElement>(null);
 
-  const outputBuffers = useSessionStore((state) => state.outputBuffers);
-  const output = outputBuffers.get(session.id) || [];
+  // Output is now written directly to xterm via IPC listener, not through Zustand store
+  // This avoids creating thousands of Map copies and React re-renders on every PTY chunk
 
   // 处理ESC确认弹窗关闭
   const handleEscConfirmClose = useCallback(() => {
@@ -233,16 +233,18 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
     return () => window.removeEventListener('resize', handleResize);
   }, [resizeTerminal]);
 
-  // 监听新输出
+  // 监听新输出 — 直接写入 xterm，绕过 Zustand store 避免不必要的重渲染
   useEffect(() => {
-    if (!xtermRef.current) return;
-
-    // 写入最新的输出
-    const lastChunk = output[output.length - 1];
-    if (lastChunk) {
-      xtermRef.current.write(lastChunk);
-    }
-  }, [output]);
+    const handleOutput = (data: any) => {
+      if (data.id === session.id && xtermRef.current) {
+        xtermRef.current.write(data.data);
+      }
+    };
+    window.electronAPI.onSessionOutput(handleOutput);
+    return () => {
+      window.electronAPI.removeListener('session:outputChunk', handleOutput);
+    };
+  }, [session.id]);
 
   // 状态颜色
   const getStatusColor = (status: SessionStatus) => {

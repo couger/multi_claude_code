@@ -30,6 +30,7 @@ export interface ElectronAPI {
   onTrayCreateSession: (callback: () => void) => void;
 
   // 移除监听
+  removeListener: (channel: string, callback: (data: any) => void) => void;
   removeAllListeners: (channel: string) => void;
 
   // 性能监控

@@ -3,23 +3,8 @@ import { Session } from '../stores/sessionStore';
 import { SessionStatus, DisplayMode } from '../../shared/constants';
 import { DEFAULT_CONFIG } from '../constants';
 import SessionCard from './SessionCard';
-
-// 分组类型定义
-interface Group {
-  id: string;
-  name: string;
-  description: string;
-  color: string;
-  icon: string;
-  sessionIds: string[];
-  createdAt: string;
-  updatedAt: string;
-  order: number;
-  collapsed: boolean;
-}
-
-const PRESET_COLORS = ['#f85149', '#58a6ff', '#3fb950', '#d29922', '#bc8cff', '#f0883e', '#f778ba', '#39d2c0'];
-const PRESET_ICONS = ['📁', '🏷️', '⭐', '🔒', '🚀', '💡', '🎯', '📌'];
+import RemoteStatusWidget from './sidebar/RemoteStatusWidget';
+import GroupSection from './sidebar/GroupSection';
 
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 500;
@@ -69,53 +54,23 @@ const Sidebar: React.FC<SidebarProps> = ({
   });
   const isResizing = useRef(false);
 
-  // 分组功能状态
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [creatingGroup, setCreatingGroup] = useState(false);
-  const [newGroupName, setNewGroupName] = useState('');
-  const [newGroupColor, setNewGroupColor] = useState(PRESET_COLORS[0]);
-  const [newGroupIcon, setNewGroupIcon] = useState(PRESET_ICONS[0]);
-  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
-  const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
-  const [dragOverSessionList, setDragOverSessionList] = useState(false); // 拖拽到会话列表区域
-  const dragCounterRef = useRef(0); // 防止拖拽闪动的计数器
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set()); // 展开的分组
-  const [groupPanelCollapsed, setGroupPanelCollapsed] = useState(false); // 分组面板是否折叠
-
-  // 获取分组中会话的ID集合
-  const groupedSessionIds = useMemo(() => {
-    const ids = new Set<string>();
-    groups.forEach(g => g.sessionIds.forEach(id => ids.add(id)));
-    return ids;
-  }, [groups]);
-
-  // 未分组的会话
-  const ungroupedSessions = useMemo(() => {
-    return sessions.filter(s => !groupedSessionIds.has(s.id));
-  }, [sessions, groupedSessionIds]);
-
-  // 切换分组展开/折叠
-  const toggleGroupExpand = useCallback((groupId: string) => {
-    setExpandedGroups(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(groupId)) {
-        newSet.delete(groupId);
-      } else {
-        newSet.add(groupId);
-      }
-      return newSet;
-    });
-  }, []);
-
   // 是否显示分组功能
   const showGroupFeature = generalSettings?.showGroupPanel !== false;
   // 是否显示性能功能
   const showPerformanceFeature = generalSettings?.showPerformancePanel !== false;
 
+  // 未分组会话的缓存（由 GroupSection 通过回调更新）
+  const [ungroupedSessions, setUngroupedSessions] = useState<Session[]>(sessions);
+
   // 实际显示的会话：当分组功能关闭时显示所有会话，否则显示未分组会话
   const displayedSessions = useMemo(() => {
     return showGroupFeature ? ungroupedSessions : sessions;
   }, [showGroupFeature, ungroupedSessions, sessions]);
+
+  // 稳定的回调引用，避免 GroupSection 的 useEffect 频繁触发
+  const handleUngroupedSessionsChange = useCallback((updated: Session[]) => {
+    setUngroupedSessions(updated);
+  }, []);
 
   // 性能监控状态
   const [systemMetrics, setSystemMetrics] = useState<{
@@ -151,89 +106,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [togglingRemote, setTogglingRemote] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_showNetworkTooltip, _setShowNetworkTooltip] = useState(false);
-  const [tokenCopied, setTokenCopied] = useState(false);
-  const [copiedIP, setCopiedIP] = useState<string | null>(null);
-  const [showAddresses, setShowAddresses] = useState(false);
-  const addressHideTimerRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // 选中的IP地址（从localStorage读取）
-  const [selectedIPs, setSelectedIPs] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem('remoteSelectedIPs');
-    return saved ? new Set(JSON.parse(saved)) : new Set();
-  });
-  
-  // 监听localStorage变化以更新选中的IP
-  useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'remoteSelectedIPs') {
-        const saved = e.newValue;
-        if (saved) {
-          try {
-            const parsed: string[] = JSON.parse(saved);
-            setSelectedIPs(new Set(parsed));
-          } catch {
-            setSelectedIPs(new Set());
-          }
-        } else {
-          setSelectedIPs(new Set());
-        }
-      }
-    };
-    window.addEventListener('storage', handleStorageChange);
-    
-    // 定期检查localStorage，确保与设置面板同步（因为storage事件有时不可靠）
-    const interval = setInterval(() => {
-      const saved = localStorage.getItem('remoteSelectedIPs');
-      setSelectedIPs(prev => {
-        if (saved) {
-          try {
-            const parsed: string[] = JSON.parse(saved);
-            const newSet = new Set(parsed);
-            // 只有当实际变化时才更新，避免不必要的重渲染
-            if (prev.size !== newSet.size || ![...prev].every(ip => newSet.has(ip))) {
-              return newSet;
-            }
-          } catch {
-            // 如果解析失败，保持原状
-          }
-        } else {
-          // 如果没有保存的数据，使用空集合
-          if (prev.size !== 0) {
-            return new Set();
-          }
-        }
-        return prev;
-      });
-    }, 1000);
-    
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      clearInterval(interval);
-    };
-  }, []);
-
-  // 计算要显示的IP地址（根据选择过滤）
-  const displayedIPs = useMemo(() => {
-    if (!remoteStatus?.localIPs) return [];
-    if (selectedIPs.size === 0) return remoteStatus.localIPs; // 没有选择时显示全部
-    return remoteStatus.localIPs.filter(ip => selectedIPs.has(ip));
-  }, [remoteStatus?.localIPs, selectedIPs]);
-
-  // 加载分组
-  useEffect(() => {
-    const loadGroups = async () => {
-      try {
-        const result = await window.electronAPI.getGroups();
-        setGroups(result || []);
-      } catch (e) {
-        console.error('加载分组失败:', e);
-      }
-    };
-    loadGroups();
-    // 监听分组更新
-    const interval = setInterval(loadGroups, 5000);
-    return () => clearInterval(interval);
-  }, []);
 
   // 加载远程访问状态
   useEffect(() => {
@@ -271,8 +143,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (!remoteStatus?.token) return;
     try {
       await navigator.clipboard.writeText(remoteStatus.token);
-      setTokenCopied(true);
-      setTimeout(() => setTokenCopied(false), 2000);
     } catch {
       const input = document.createElement('input');
       input.value = remoteStatus.token;
@@ -280,120 +150,8 @@ const Sidebar: React.FC<SidebarProps> = ({
       input.select();
       document.execCommand('copy');
       document.body.removeChild(input);
-      setTokenCopied(true);
-      setTimeout(() => setTokenCopied(false), 2000);
     }
   }, [remoteStatus?.token]);
-
-  // 创建分组
-  const handleCreateGroup = useCallback(async () => {
-    if (!newGroupName.trim()) return;
-    try {
-      await window.electronAPI.createGroup({
-        name: newGroupName.trim(),
-        color: newGroupColor,
-        icon: newGroupIcon,
-        description: '',
-      });
-      setNewGroupName('');
-      setNewGroupColor(PRESET_COLORS[0]);
-      setNewGroupIcon(PRESET_ICONS[0]);
-      setCreatingGroup(false);
-      const result = await window.electronAPI.getGroups();
-      setGroups(result || []);
-    } catch (e) {
-      console.error('创建分组失败:', e);
-    }
-  }, [newGroupName, newGroupColor, newGroupIcon]);
-
-  // 拖拽会话到分组
-  const handleDragStart = useCallback((sessionId: string) => {
-    setDraggingSessionId(sessionId);
-    dragCounterRef.current = 0;
-  }, []);
-
-  const handleGroupDragEnter = useCallback((e: React.DragEvent, groupId: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounterRef.current++;
-    setDragOverGroupId(groupId);
-  }, []);
-
-  const handleGroupDragOver = useCallback((e: React.DragEvent, groupId: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // 仅在状态未设置时更新，避免不必要的重渲染
-    if (dragOverGroupId !== groupId) {
-      setDragOverGroupId(groupId);
-    }
-  }, [dragOverGroupId]);
-
-  const handleGroupDragLeave = useCallback((e: React.DragEvent) => {
-    e.stopPropagation();
-    dragCounterRef.current--;
-    // 只有当计数器归零时才真正移除高亮
-    if (dragCounterRef.current <= 0) {
-      dragCounterRef.current = 0;
-      setDragOverGroupId(null);
-    }
-  }, []);
-
-  const handleDrop = useCallback(async (groupId: string) => {
-    dragCounterRef.current = 0;
-    if (!draggingSessionId) return;
-    try {
-      await window.electronAPI.addSessionToGroup(groupId, draggingSessionId);
-      const result = await window.electronAPI.getGroups();
-      setGroups(result || []);
-    } catch (e) {
-      console.error('添加会话到分组失败:', e);
-    }
-    setDraggingSessionId(null);
-    setDragOverGroupId(null);
-    setDragOverSessionList(false);
-  }, [draggingSessionId]);
-
-  // 拖拽到会话列表（从分组中移出）
-  const handleSessionListDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    if (!draggingSessionId) return;
-    setDragOverSessionList(true);
-  }, [draggingSessionId]);
-
-  const handleSessionListDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    if (draggingSessionId) {
-      setDragOverSessionList(true);
-    }
-  }, [draggingSessionId]);
-
-  const handleSessionListDragLeave = useCallback((e: React.DragEvent) => {
-    // 检查是否真的离开了容器（不是进入了子元素）
-    const relatedTarget = e.relatedTarget as Node | null;
-    const currentTarget = e.currentTarget as Node;
-    if (relatedTarget && currentTarget.contains(relatedTarget)) {
-      return; // 仍在容器内，不处理
-    }
-    setDragOverSessionList(false);
-  }, []);
-
-  const handleSessionListDrop = useCallback(async () => {
-    if (!draggingSessionId) return;
-    // 检查会话是否在分组中
-    const sourceGroup = groups.find(g => g.sessionIds.includes(draggingSessionId));
-    if (sourceGroup) {
-      try {
-        await window.electronAPI.removeSessionFromGroup(sourceGroup.id, draggingSessionId);
-        const result = await window.electronAPI.getGroups();
-        setGroups(result || []);
-      } catch (e) {
-        console.error('从分组移出会话失败:', e);
-      }
-    }
-    setDraggingSessionId(null);
-    setDragOverSessionList(false);
-    setDragOverGroupId(null);
-  }, [draggingSessionId, groups]);
 
   // 自动隐藏逻辑
   const [, forceUpdate] = useState({});
@@ -621,39 +379,29 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
 
-          {/* 会话列表 - 也作为从分组拖出的放置区域 */}
-          <div
-            className={`flex-1 overflow-y-auto p-2 space-y-2 transition-colors ${
-              dragOverSessionList ? 'bg-accent-primary/10 border border-accent-primary border-dashed rounded' : ''
-            }`}
-            onDragEnter={handleSessionListDragEnter}
-            onDragOver={handleSessionListDragOver}
-            onDragLeave={handleSessionListDragLeave}
-            onDrop={handleSessionListDrop}
-          >
-            {dragOverSessionList && draggingSessionId && (
-              <div className="text-xs text-accent-primary text-center py-1 mb-1">
-                释放以从分组中移出
-              </div>
-            )}
-            {displayedSessions.length === 0 && groups.length === 0 ? (
-              <div className="text-center text-dark-500 text-sm py-8">
-                <p>暂无会话</p>
-                <p className="text-xs mt-1">点击上方按钮创建</p>
-              </div>
-            ) : displayedSessions.length === 0 && !dragOverSessionList ? (
-              <div className="text-center text-dark-500 text-sm py-4">
-                <p>所有会话已分组</p>
-              </div>
-            ) : (
-              displayedSessions.map((session) => (
-                <div
-                  key={session.id}
-                  draggable
-                  onDragStart={() => handleDragStart(session.id)}
-                  onDragEnd={() => setDraggingSessionId(null)}
-                >
+          {/* 分组功能开启时：会话列表 + 分组面板由 GroupSection 管理 */}
+          {showGroupFeature ? (
+            <GroupSection
+              sessions={sessions}
+              expandedSessionId={expandedSessionId}
+              displayMode={displayMode}
+              getAlertCount={getAlertCount}
+              onCloseSession={onCloseSession}
+              onExpandSession={onExpandSession}
+              onUngroupedSessionsChange={handleUngroupedSessionsChange}
+            />
+          ) : (
+            /* 分组功能关闭时：直接显示所有会话 */
+            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              {displayedSessions.length === 0 ? (
+                <div className="text-center text-dark-500 text-sm py-8">
+                  <p>暂无会话</p>
+                  <p className="text-xs mt-1">点击上方按钮创建</p>
+                </div>
+              ) : (
+                displayedSessions.map((session) => (
                   <SessionCard
+                    key={session.id}
                     session={session}
                     displayMode={displayMode}
                     isExpanded={expandedSessionId === session.id}
@@ -661,168 +409,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                     onClose={() => onCloseSession(session.id)}
                     onExpand={() => onExpandSession(session.id)}
                   />
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* 分组区域 - 仅在分组功能开启时显示 */}
-          {showGroupFeature && (
-            <div className="border-t border-dark-700 p-2">
-              <div className="flex items-center justify-between mb-2">
-                <button
-                  onClick={() => setGroupPanelCollapsed(!groupPanelCollapsed)}
-                  className="text-xs text-dark-400 flex items-center gap-1 hover:text-dark-300 transition-colors"
-                >
-                  <svg className={`w-3.5 h-3.5 transition-transform ${groupPanelCollapsed ? '' : 'rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                  </svg>
-                  分组
-                  <span className="text-dark-500">({groups.length})</span>
-                </button>
-                <button
-                  onClick={() => setCreatingGroup(!creatingGroup)}
-                  className="text-xs text-accent-primary hover:text-accent-primary/80"
-                  title="新建分组"
-                >
-                  +
-                </button>
-              </div>
-
-              {!groupPanelCollapsed && (
-                <>
-                  {/* 新建分组表单 */}
-                  {creatingGroup && (
-                    <div className="mb-2 p-2 bg-dark-900 rounded space-y-2">
-                      <input
-                        type="text"
-                        value={newGroupName}
-                        onChange={(e) => setNewGroupName(e.target.value)}
-                        placeholder="分组名称"
-                        className="w-full px-2 py-1 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
-                        autoFocus
-                      />
-                      <div className="flex items-center gap-2">
-                        <div className="flex gap-1">
-                          {PRESET_COLORS.slice(0, 6).map((c) => (
-                            <button
-                              key={c}
-                              onClick={() => setNewGroupColor(c)}
-                              className={`w-4 h-4 rounded-sm ${newGroupColor === c ? 'ring-1 ring-white' : ''}`}
-                              style={{ backgroundColor: c }}
-                            />
-                          ))}
-                        </div>
-                        <div className="flex gap-1">
-                          {PRESET_ICONS.slice(0, 4).map((ic) => (
-                            <button
-                              key={ic}
-                              onClick={() => setNewGroupIcon(ic)}
-                              className={`w-5 h-5 rounded text-xs ${newGroupIcon === ic ? 'bg-dark-600' : 'hover:bg-dark-700'}`}
-                            >
-                              {ic}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="flex gap-1">
-                        <button
-                          onClick={handleCreateGroup}
-                          disabled={!newGroupName.trim()}
-                          className="flex-1 py-1 bg-accent-primary text-dark-900 rounded text-xs font-medium hover:bg-accent-primary/80 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          创建
-                        </button>
-                        <button
-                          onClick={() => setCreatingGroup(false)}
-                          className="px-2 py-1 bg-dark-700 text-dark-300 rounded text-xs hover:bg-dark-600"
-                        >
-                          取消
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 分组列表 - 可折叠，每个分组下显示会话 */}
-                  <div className="space-y-1">
-                    {groups.length === 0 ? (
-                      <div className="text-xs text-dark-500 text-center py-2">
-                        点击 + 创建分组
-                      </div>
-                    ) : (
-                      groups.map((group) => {
-                        const isExpanded = expandedGroups.has(group.id);
-                        const groupSessions = sessions.filter(s => group.sessionIds.includes(s.id));
-                        const activeSessionCount = groupSessions.length; // 只统计实际存在的会话
-                        return (
-                          <div key={group.id}>
-                            <div
-                              className={`p-2 rounded cursor-pointer transition-colors ${
-                                dragOverGroupId === group.id
-                                  ? 'bg-accent-primary/20 border border-accent-primary border-dashed'
-                                  : 'bg-dark-900 hover:bg-dark-700'
-                              }`}
-                              onDragEnter={(e) => handleGroupDragEnter(e, group.id)}
-                              onDragOver={(e) => handleGroupDragOver(e, group.id)}
-                              onDragLeave={handleGroupDragLeave}
-                              onDrop={() => handleDrop(group.id)}
-                              onClick={() => toggleGroupExpand(group.id)}
-                            >
-                              <div className="flex items-center gap-2">
-                                <svg
-                                  className={`w-3 h-3 text-dark-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                >
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                </svg>
-                                <span className="text-sm">{group.icon}</span>
-                                <span className="text-xs text-dark-200 truncate flex-1">{group.name}</span>
-                                <span
-                                  className="w-3 h-3 rounded-sm shrink-0"
-                                  style={{ backgroundColor: group.color }}
-                                  title={group.color}
-                                />
-                                <span className="text-xs text-dark-500">{activeSessionCount}</span>
-                              </div>
-                              {dragOverGroupId === group.id && (
-                                <div className="mt-1 text-xs text-accent-primary text-center">
-                                  释放以添加会话
-                                </div>
-                              )}
-                            </div>
-                            {/* 展开时显示分组内的会话 */}
-                            {isExpanded && groupSessions.length > 0 && (
-                              <div className="ml-4 mt-1 space-y-1 border-l-2 border-dark-600 pl-2">
-                                {groupSessions.map((session) => (
-                                  <div
-                                    key={session.id}
-                                    draggable
-                                    onDragStart={() => handleDragStart(session.id)}
-                                    onDragEnd={() => setDraggingSessionId(null)}
-                                  >
-                                    <SessionCard
-                                      session={session}
-                                      displayMode={displayMode}
-                                      isExpanded={expandedSessionId === session.id}
-                                      alertCount={getAlertCount(session.id)}
-                                      onClose={() => onCloseSession(session.id)}
-                                      onExpand={() => onExpandSession(session.id)}
-                                    />
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </>
+                ))
               )}
             </div>
           )}
@@ -872,134 +459,12 @@ const Sidebar: React.FC<SidebarProps> = ({
           {/* 底部：网络功能 + 设置按钮 */}
           <div className="p-2 border-t border-dark-700 space-y-1.5">
             {/* 网络功能切换开关 */}
-            {remoteStatus && (
-              <div className="relative">
-                {/* 第一行：网络状态 + 复制令牌 + 开关 + 下拉按钮 */}
-                <div
-                  className="flex items-center justify-between p-2 bg-dark-900 rounded"
-                  onMouseEnter={() => {
-                    if (remoteStatus.running) {
-                      if (addressHideTimerRef.current) {
-                        clearTimeout(addressHideTimerRef.current);
-                        addressHideTimerRef.current = null;
-                      }
-                      setShowAddresses(true);
-                    }
-                  }}
-                  onMouseLeave={() => {
-                    if (showAddresses) {
-                      addressHideTimerRef.current = setTimeout(() => {
-                        setShowAddresses(false);
-                      }, 300);
-                    }
-                  }}
-                >
-                  <div className="flex items-center gap-2">
-                    <svg className="w-3.5 h-3.5 text-dark-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
-                    </svg>
-                    <span className="text-xs text-dark-300">网络</span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                      remoteStatus.running
-                        ? 'bg-green-600/20 text-green-400'
-                        : remoteStatus.enabled
-                        ? 'bg-yellow-600/20 text-yellow-400'
-                        : 'bg-dark-600 text-dark-400'
-                    }`}>
-                      {remoteStatus.running ? '运行中' : remoteStatus.enabled ? '启动中' : '已停止'}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={handleToggleRemote}
-                      disabled={togglingRemote}
-                      className={`relative w-10 h-5 rounded-full transition-colors ${
-                        remoteStatus.enabled ? 'bg-accent-primary' : 'bg-dark-600'
-                      }`}
-                    >
-                      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                        remoteStatus.enabled ? 'left-5' : 'left-0.5'
-                      }`} />
-                    </button>
-                  </div>
-                </div>
-                {/* 悬浮滑出地址列表 - 覆盖层方式，不影响其他元素 */}
-                {remoteStatus.running && showAddresses && (
-                  <div
-                    className="absolute left-0 right-0 bottom-full mb-1 z-30 bg-dark-900 border border-dark-700 rounded shadow-lg"
-                    onMouseEnter={() => {
-                      if (addressHideTimerRef.current) {
-                        clearTimeout(addressHideTimerRef.current);
-                        addressHideTimerRef.current = null;
-                      }
-                    }}
-                    onMouseLeave={() => {
-                      addressHideTimerRef.current = setTimeout(() => {
-                        setShowAddresses(false);
-                      }, 200);
-                    }}
-                  >
-                    <div className="p-2 border-b border-dark-700 flex items-center justify-between">
-                      <div className="text-xs text-dark-500">访问地址 {displayedIPs.length > 0 ? `(共 ${displayedIPs.length} 个)` : ''}</div>
-                      <button
-                        onClick={handleCopyToken}
-                        className="flex items-center gap-1 px-2 py-0.5 text-xs text-dark-400 hover:text-dark-200 bg-dark-800 rounded hover:bg-dark-700 transition-colors"
-                        title="复制令牌"
-                      >
-                        {tokenCopied ? (
-                          <>
-                            <svg className="w-3 h-3 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                            <span className="text-green-400">已复制</span>
-                          </>
-                        ) : (
-                          <>
-                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                            <span>复制令牌</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    {displayedIPs.length > 0 ? (
-                      <div className="max-h-48 overflow-y-auto">
-                        {displayedIPs.map((ip) => (
-                        <div key={ip} className="flex items-center justify-between p-2 hover:bg-dark-800 transition-colors border-b border-dark-800/50 last:border-b-0">
-                          <span className="text-xs text-dark-300 font-mono select-text">http://{ip}:{remoteStatus.port}</span>
-                          <button
-                            onClick={async () => {
-                              const url = `http://${ip}:${remoteStatus.port}/`;
-                              try { await navigator.clipboard.writeText(url); } catch { /* ignore */ }
-                              setCopiedIP(ip);
-                              setTimeout(() => setCopiedIP(null), 2000);
-                            }}
-                            className="p-1 rounded hover:bg-dark-700 transition-colors"
-                            title="复制地址"
-                          >
-                            {copiedIP === ip ? (
-                              <svg className="w-3 h-3 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            ) : (
-                              <svg className="w-3 h-3 text-dark-400 hover:text-dark-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                              </svg>
-                            )}
-                          </button>
-                        </div>
-                      ))}
-                      </div>
-                    ) : (
-                      <div className="p-3 text-xs text-dark-500 text-center">
-                        请在设置中选择要显示的IP地址
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
+            <RemoteStatusWidget
+              remoteStatus={remoteStatus}
+              togglingRemote={togglingRemote}
+              onToggleRemote={handleToggleRemote}
+              onCopyToken={handleCopyToken}
+            />
 
             {/* 设置按钮 - 仅在真正的 Electron 环境中显示 */}
             {window.electronAPI?.isElectron === true && (

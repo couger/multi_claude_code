@@ -97,49 +97,72 @@ const App: React.FC = () => {
     });
 
     // 监听会话创建
-    window.electronAPI.onSessionCreated((session: any) => {
+    const handleCreated = (session: any) => {
       addSession({
         ...session,
         createdAt: new Date(session.createdAt),
         lastActivity: new Date(session.lastActivity),
       });
-    });
+    };
 
-    // 监听输出
-    window.electronAPI.onSessionOutput((data: any) => {
-      appendOutput(data.id, data.data);
-    });
+    // 监听输出 — 节流写入 store，避免高频输出导致过多重渲染
+    const outputBuffer = new Map<string, string[]>();
+    let outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushOutput = () => {
+      outputFlushTimer = null;
+      for (const [id, chunks] of outputBuffer) {
+        if (chunks.length > 0) {
+          appendOutput(id, chunks.join(''));
+        }
+        outputBuffer.set(id, []);
+      }
+    };
 
-    // 监听状态变化
-    window.electronAPI.onSessionStatus((data: any) => {
+    const handleOutput = (data: any) => {
+      let chunks = outputBuffer.get(data.id);
+      if (!chunks) {
+        chunks = [];
+        outputBuffer.set(data.id, chunks);
+      }
+      chunks.push(data.data);
+      if (!outputFlushTimer) {
+        outputFlushTimer = setTimeout(flushOutput, 100);
+      }
+    };
+
+    const handleStatus = (data: any) => {
       updateSession(data.id, { status: data.status });
-    });
+    };
 
-    // 监听会话关闭
-    window.electronAPI.onSessionClosed((data: any) => {
+    const handleClosed = (data: any) => {
       removeSession(data.id);
-    });
+    };
 
-    // 监听告警
-    window.electronAPI.onAlert((alert: any) => {
+    const handleAlert = (alert: any) => {
       addAlert({
         sessionId: alert.sessionId,
         type: alert.type,
         message: alert.message,
       });
-    });
+    };
 
-    // 监听托盘新建会话事件
-    window.electronAPI.onTrayCreateSession?.(() => {
+    const handleTrayCreate = () => {
       setShowCreateDialog(true);
-    });
+    };
+
+    window.electronAPI.onSessionCreated(handleCreated);
+    window.electronAPI.onSessionOutput(handleOutput);
+    window.electronAPI.onSessionStatus(handleStatus);
+    window.electronAPI.onSessionClosed(handleClosed);
+    window.electronAPI.onAlert(handleAlert);
+    window.electronAPI.onTrayCreateSession?.(handleTrayCreate);
 
     return () => {
-      window.electronAPI.removeAllListeners('session:created');
-      window.electronAPI.removeAllListeners('session:outputChunk');
-      window.electronAPI.removeAllListeners('session:status');
-      window.electronAPI.removeAllListeners('session:closed');
-      window.electronAPI.removeAllListeners('alert:trigger');
+      window.electronAPI.removeListener('session:created', handleCreated);
+      window.electronAPI.removeListener('session:outputChunk', handleOutput);
+      window.electronAPI.removeListener('session:status', handleStatus);
+      window.electronAPI.removeListener('session:closed', handleClosed);
+      window.electronAPI.removeListener('alert:trigger', handleAlert);
     };
   }, []);
 
