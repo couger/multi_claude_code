@@ -121,6 +121,22 @@ class ProcessManager {
     const argsString = options.args || '';
     const outputFile = path.join(this.outputDir, `${id}.log`);
 
+    // 验证工作目录是否存在
+    try {
+      const stat = await fs.promises.stat(workDir);
+      if (!stat.isDirectory()) {
+        throw new Error(`工作目录不是一个有效的目录: ${workDir}`);
+      }
+    } catch (e: any) {
+      if (e.code === 'ENOENT') {
+        throw new Error(`工作目录不存在: ${workDir}`);
+      }
+      if (e.code === 'EACCES') {
+        throw new Error(`没有权限访问工作目录: ${workDir}`);
+      }
+      throw e;
+    }
+
     const parsedArgs: string[] = argsString
       ? argsString.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((a: string) => a.replace(/^"|"$/g, '')) || []
       : [];
@@ -155,9 +171,17 @@ class ProcessManager {
 
       sendToRenderer(IPC_CHANNELS.SESSION_CREATED, this.toPublicSession(session));
       return this.toPublicSession(session);
-    } catch (error) {
+    } catch (error: any) {
       session.status = SessionStatus.ERROR;
-      throw error;
+      // 提供更友好的错误信息
+      const errorCode = error?.code || '';
+      if (errorCode === 'ENOENT') {
+        throw new Error(`无法找到 Claude CLI 命令: ${command}\n请确保 Claude Code CLI 已正确安装并添加到 PATH 中。`);
+      }
+      if (errorCode === 'EACCES' || errorCode === 'EPERM') {
+        throw new Error(`没有权限执行命令: ${command}`);
+      }
+      throw new Error(`创建会话失败: ${error?.message || String(error)}`);
     }
   }
 

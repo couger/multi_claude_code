@@ -357,19 +357,57 @@ const Sidebar: React.FC<SidebarProps> = ({
             <button
               onClick={async (e) => {
                 e.stopPropagation();
+                const btn = e.currentTarget;
+                const originalText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = `
+                  <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  创建中...
+                `;
                 try {
                   // 从localStorage获取上次工作目录和参数
                   const lastWorkDir = localStorage.getItem('lastWorkDir');
                   const lastArgs = localStorage.getItem('lastArgs');
+
+                  // 检查工作目录冲突
+                  if (lastWorkDir && sessions.length > 0) {
+                    const normalizedNew = lastWorkDir.replace(/\\/g, '/').toLowerCase().replace(/\/$/, '');
+                    const hasConflict = sessions.some(s => {
+                      if (s.status === 'completed' || s.status === 'error') return false;
+                      const normalizedExisting = (s.workDir || '').replace(/\\/g, '/').toLowerCase().replace(/\/$/, '');
+                      if (!normalizedExisting) return false;
+                      if (normalizedNew === normalizedExisting) return true;
+                      if (normalizedNew.startsWith(normalizedExisting + '/')) return true;
+                      if (normalizedExisting.startsWith(normalizedNew + '/')) return true;
+                      return false;
+                    });
+                    if (hasConflict) {
+                      const proceed = confirm(
+                        '⚠️ 检测到工作目录与其他运行中的会话重叠。\n\n' +
+                        '重叠的工作目录可能导致文件操作互相干扰。\n\n' +
+                        '是否仍要创建此会话？'
+                      );
+                      if (!proceed) return;
+                    }
+                  }
+
                   await window.electronAPI.createSession({
                     workDir: lastWorkDir || undefined,
                     args: lastArgs || undefined,
                   });
-                } catch (err) {
+                } catch (err: any) {
                   console.error('快速创建失败:', err);
+                  // 显示错误提示
+                  alert(`创建会话失败: ${err?.message || String(err)}`);
+                } finally {
+                  btn.disabled = false;
+                  btn.innerHTML = originalText;
                 }
               }}
-              className="quick-create-btn w-full mt-1.5 py-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors text-xs flex items-center justify-center gap-1"
+              className="quick-create-btn w-full mt-1.5 py-1.5 bg-dark-700 text-dark-300 rounded hover:bg-dark-600 transition-colors text-xs flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
               title="使用上次目录快速创建"
             >
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

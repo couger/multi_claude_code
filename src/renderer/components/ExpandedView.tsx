@@ -185,8 +185,14 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
         window.electronAPI.sendInput(session.id, data);
       });
 
-      // 处理键盘快捷键 - Ctrl+C 复制，Ctrl+V 粘贴
-      terminal.onKey(({ domEvent }) => {
+      // 处理键盘快捷键 - Ctrl+C 复制，Ctrl+V 粘贴，Shift+Enter 多行
+      terminal.onKey(({ domEvent, key }) => {
+        // Shift+Enter 发送换行符（而非回车），用于多行输入
+        if (domEvent.shiftKey && domEvent.key === 'Enter') {
+          domEvent.preventDefault();
+          window.electronAPI.sendInput(session.id, '\n');
+          return;
+        }
         // Ctrl+C 复制选中文本
         if (domEvent.ctrlKey && (domEvent.key === 'c' || domEvent.key === 'C')) {
           const selection = terminal.getSelection();
@@ -234,17 +240,18 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
   }, [resizeTerminal]);
 
   // 监听新输出 — 直接写入 xterm，绕过 Zustand store 避免不必要的重渲染
+  const handleOutput = useCallback((data: any) => {
+    if (data.id === session.id && xtermRef.current) {
+      xtermRef.current.write(data.data);
+    }
+  }, [session.id]);
+
   useEffect(() => {
-    const handleOutput = (data: any) => {
-      if (data.id === session.id && xtermRef.current) {
-        xtermRef.current.write(data.data);
-      }
-    };
     window.electronAPI.onSessionOutput(handleOutput);
     return () => {
       window.electronAPI.removeListener('session:outputChunk', handleOutput);
     };
-  }, [session.id]);
+  }, [handleOutput]);
 
   // 状态颜色
   const getStatusColor = (status: SessionStatus) => {

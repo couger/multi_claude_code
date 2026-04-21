@@ -551,6 +551,8 @@ const AITab: React.FC = () => {
   const [showApiKey, setShowApiKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [testError, setTestError] = useState<string>('');
+  const [testResponse, setTestResponse] = useState<string>('');
 
   // 提示词相关状态（暂未实现）
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -566,6 +568,20 @@ const AITab: React.FC = () => {
     localStorage.setItem('aiConfig', JSON.stringify(config));
   }, [config]);
 
+  // 获取实际请求URL
+  const getActualRequestUrl = useCallback(() => {
+    if (config.provider === 'custom' && config.apiBase) {
+      // 确保URL以 /chat/completions 结尾
+      let base = config.apiBase.trim();
+      if (base.endsWith('/')) base = base.slice(0, -1);
+      if (!base.endsWith('/chat/completions')) {
+        base = base + '/chat/completions';
+      }
+      return base;
+    }
+    return 'https://api.openai.com/v1/chat/completions';
+  }, [config.provider, config.apiBase]);
+
   // 处理从文件加载提示词
   const handleLoadPromptFromFile = async () => {
     if (!window.electronAPI) {
@@ -579,13 +595,17 @@ const AITab: React.FC = () => {
   const handleTest = async () => {
     if (!config.apiKey) {
       setTestResult('error');
+      setTestError('请输入 API 密钥');
       return;
     }
     setTesting(true);
     setTestResult(null);
+    setTestError('');
+    setTestResponse('');
+
+    const url = getActualRequestUrl();
     try {
-      // 简单的测试请求
-      const response = await fetch(config.apiBase || 'https://api.openai.com/v1/chat/completions', {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -597,9 +617,24 @@ const AITab: React.FC = () => {
           max_tokens: 5,
         }),
       });
-      setTestResult(response.ok ? 'success' : 'error');
-    } catch {
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok) {
+        setTestResult('success');
+        setTestResponse(`模型: ${data.model || config.model}, 用量: ${JSON.stringify(data.usage || {})}`);
+      } else {
+        setTestResult('error');
+        setTestError(`HTTP ${response.status}: ${data.error?.message || data.error?.type || JSON.stringify(data)}`);
+      }
+    } catch (err: any) {
       setTestResult('error');
+      // 提供更详细的错误信息
+      if (err.message === 'Failed to fetch') {
+        setTestError('网络请求失败 - 请检查：1) URL是否正确 2) 网络是否可达 3) 如在浏览器中访问，可能被CORS限制');
+      } else {
+        setTestError(err?.message || '网络请求失败');
+      }
     }
     setTesting(false);
   };
@@ -693,7 +728,7 @@ const AITab: React.FC = () => {
 
       {/* API基础URL（自定义时显示） */}
       {config.provider === 'custom' && (
-        <div className="space-y-2">
+        <div className="space-y-1">
           <label className="text-xs text-dark-400">API基础URL</label>
           <input
             type="text"
@@ -702,6 +737,16 @@ const AITab: React.FC = () => {
             placeholder="https://api.example.com/v1"
             className="w-full px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
           />
+          <div className="text-xs text-dark-500">
+            实际请求: {getActualRequestUrl()}
+          </div>
+        </div>
+      )}
+
+      {/* 非自定义时也显示URL */}
+      {config.provider !== 'custom' && (
+        <div className="text-xs text-dark-500">
+          实际请求: {getActualRequestUrl()}
         </div>
       )}
 
@@ -727,7 +772,20 @@ const AITab: React.FC = () => {
             max="1"
             step="0.1"
             value={config.temperature}
-            onChange={(e) => setConfig({ ...config, temperature: parseFloat(e.target.value) || 0.7 })}
+            onChange={(e) => {
+              const val = e.target.value;
+              // 只在用户完成输入时更新，允许输入空字符串
+              if (val === '' || val === '.') return;
+              const parsed = parseFloat(val);
+              if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) {
+                setConfig({ ...config, temperature: parsed });
+              }
+            }}
+            onBlur={(e) => {
+              // 失去焦点时确保有效值
+              const parsed = parseFloat(e.target.value);
+              setConfig({ ...config, temperature: isNaN(parsed) ? 0.7 : Math.max(0, Math.min(1, parsed)) });
+            }}
             className="w-full px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 focus:border-accent-primary focus:outline-none"
           />
         </div>
@@ -738,7 +796,18 @@ const AITab: React.FC = () => {
             min="1"
             max="128000"
             value={config.maxTokens}
-            onChange={(e) => setConfig({ ...config, maxTokens: parseInt(e.target.value) || 4096 })}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val === '') return;
+              const parsed = parseInt(val, 10);
+              if (!isNaN(parsed) && parsed >= 1 && parsed <= 128000) {
+                setConfig({ ...config, maxTokens: parsed });
+              }
+            }}
+            onBlur={(e) => {
+              const parsed = parseInt(e.target.value, 10);
+              setConfig({ ...config, maxTokens: isNaN(parsed) || parsed < 1 ? 4096 : Math.min(128000, parsed) });
+            }}
             className="w-full px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 focus:border-accent-primary focus:outline-none"
           />
         </div>
@@ -749,26 +818,49 @@ const AITab: React.FC = () => {
             min="512"
             max="128000"
             value={config.contextLength}
-            onChange={(e) => setConfig({ ...config, contextLength: parseInt(e.target.value) || 8192 })}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val === '') return;
+              const parsed = parseInt(val, 10);
+              if (!isNaN(parsed) && parsed >= 512 && parsed <= 128000) {
+                setConfig({ ...config, contextLength: parsed });
+              }
+            }}
+            onBlur={(e) => {
+              const parsed = parseInt(e.target.value, 10);
+              setConfig({ ...config, contextLength: isNaN(parsed) || parsed < 512 ? 8192 : Math.min(128000, parsed) });
+            }}
             className="w-full px-3 py-1.5 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 focus:border-accent-primary focus:outline-none"
           />
         </div>
       </div>
 
       {/* 测试连接 */}
-      <div className="flex items-center gap-2">
-        <button
-          onClick={handleTest}
-          disabled={testing || !config.apiKey}
-          className="flex-1 py-2 bg-accent-primary text-dark-900 rounded text-sm font-medium hover:bg-accent-primary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {testing ? '测试中...' : '测试连接'}
-        </button>
-        {testResult === 'success' && (
-          <span className="text-xs text-green-400">✓ 连接成功</span>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleTest}
+            disabled={testing || !config.apiKey}
+            className="flex-1 py-2 bg-accent-primary text-dark-900 rounded text-sm font-medium hover:bg-accent-primary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {testing ? '测试中...' : '测试连接'}
+          </button>
+          {testResult === 'success' && (
+            <span className="text-xs text-green-400">✓ 连接成功</span>
+          )}
+          {testResult === 'error' && (
+            <span className="text-xs text-red-400">✗ 连接失败</span>
+          )}
+        </div>
+        {testError && (
+          <div className="text-xs text-red-400 p-2 bg-red-900/20 rounded break-all">
+            {testError}
+          </div>
         )}
-        {testResult === 'error' && (
-          <span className="text-xs text-red-400">✗ 连接失败</span>
+        {testResponse && (
+          <div className="text-xs text-green-400 p-2 bg-green-900/20 rounded break-all">
+            {testResponse}
+          </div>
         )}
       </div>
 

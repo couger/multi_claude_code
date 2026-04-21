@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useState, useRef } from 'react';
 import { useSessionStore } from './stores/sessionStore';
 import Sidebar from './components/Sidebar';
 import ExpandedView from './components/ExpandedView';
@@ -34,6 +34,9 @@ const App: React.FC = () => {
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+
+  // 防止 StrictMode 双重执行
+  const listenersInitialized = useRef(false);
 
   // 通用设置状态
   const [generalSettings, setGeneralSettings] = useState<GeneralSettings>(() => {
@@ -87,6 +90,10 @@ const App: React.FC = () => {
 
   // 初始化 IPC 监听
   useEffect(() => {
+    // 防止 StrictMode 双重执行
+    if (listenersInitialized.current) return;
+    listenersInitialized.current = true;
+
     // 加载已有会话
     window.electronAPI.getSessions().then((loadedSessions) => {
       setSessions(loadedSessions.map((s: any) => ({
