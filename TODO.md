@@ -55,6 +55,273 @@
 
 ---
 
+## P1：AI助手核心能力（本地小模型 + 语音交互）
+
+### 整体架构
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    主进程 (Main)                      │
+│                                                      │
+│  ┌──────────────┐    ┌──────────────────────────┐   │
+│  │ ProcessManager│───→│   AIAssistantManager     │   │
+│  │  (会话输出)   │    │                          │   │
+│  └──────────────┘    │  ┌──────────────────┐    │   │
+│                      │  │ 心跳监控模块      │    │   │
+│  ┌──────────────┐    │  └──────────────────┘    │   │
+│  │  TrayManager │←──│  ┌──────────────────┐    │   │
+│  │  (桌面通知)   │    │  │ 输出分析模块      │    │   │
+│  └──────────────┘    │  └──────────────────┘    │   │
+│                      │  ┌──────────────────┐    │   │
+│                      │  │ 语音交互模块      │    │   │
+│                      │  │  STT ← → TTS     │    │   │
+│                      │  └──────────────────┘    │   │
+│                      └──────────────────────────┘   │
+│                              ↑↓ HTTP                │
+│                       本地小模型API                   │
+│                    (Ollama/vLLM/llama.cpp)           │
+└─────────────────────────────────────────────────────┘
+         ↕ IPC                    ↕ IPC
+┌──────────────────┐    ┌──────────────────┐
+│   渲染进程        │    │   渲染进程        │
+│  (AI配置UI)       │    │  (告警+语音UI)    │
+└──────────────────┘    └──────────────────┘
+```
+
+### 模块1：AIAssistantManager（主进程新类）
+
+**文件**：`src/main/AIAssistantManager.ts`
+
+**职责**：AI助手的核心调度器，协调所有AI相关功能
+
+**关键接口**：
+
+```typescript
+class AIAssistantManager {
+  private config: AIConfig;           // 从渲染进程同步的AI配置
+  private healthy: boolean;           // 心跳状态
+  private latency: number;            // 当前响应延迟ms
+  private heartbeatTimer: Timer;      // 心跳定时器
+  private outputAnalyzer: OutputAnalyzer;
+  private voiceManager: VoiceManager;
+
+  // 核心方法
+  start(): void;                      // 启动助手（心跳+监听）
+  stop(): void;                       // 停止
+  updateConfig(config: AIConfig): void;
+
+  // AI调用（统一入口，带超时和重试）
+  async query(prompt: string, systemPrompt?: string): Promise<string>;
+
+  // 心跳
+  private startHeartbeat(interval: number): void;
+  private stopHeartbeat(): void;
+  private checkHealth(): Promise<boolean>;
+
+  // AI自身异常通知
+  private notifyAIUnhealthy(reason: string): void;
+  private notifyAIRecovered(): void;
+}
+```
+
+**AI配置迁移**：从渲染进程 `localStorage` 迁移到主进程，新增IPC通道 `ai:getConfig` / `ai:updateConfig`，渲染进程只做UI展示。
+
+### 模块2：心跳监控
+
+| 项目 | 方案 |
+|------|------|
+| 心跳频率 | 默认30秒一次，可配置 |
+| 心跳方式 | 向本地模型API发一个极短请求（`max_tokens: 1`），计时延迟 |
+| 判定不健康 | 连续3次超时/失败 → 标记为不健康 |
+| 恢复判定 | 连续2次成功 → 恢复为健康 |
+| 超时阈值 | 单次请求5秒超时（本地模型应<1s响应） |
+| 延迟预警 | 延迟>3秒时通过告警系统发出WARNING（模型可能过载） |
+| 不健康通知 | 通过现有 `alert:trigger` IPC发出 `AlertType.ERROR`，消息如"AI助手无响应，看守功能暂停" |
+| 恢复通知 | 发出 `AlertType.TASK_COMPLETE`，"AI助手已恢复" |
+| UI指示 | 渲染进程显示AI状态灯：🟢健康 🟡延迟高 🔴不可用 |
+
+**实现位置**：AIAssistantManager内部，独立定时器，不依赖其他模块运行。
+
+### 模块3：输出分析模块（OutputAnalyzer）
+
+**核心流程**：
+
+```
+ProcessManager.handleOutput()
+       │
+       ▼
+  checkAlerts()  ──→  现有正则初筛（保留，作为快路径）
+       │
+       ▼ 命中时
+  AIAssistantManager.analyzeAlert(sessionId, matchedText)
+       │
+       ▼
+  AI分类请求（短prompt，传入匹配到的文本片段）
+       │
+       ├── 分类结果：等待确认/等待输入/可忽略/需人工
+       │
+       ├── 生成一句话摘要（用于语音播报/通知）
+       │
+       └── 建议动作：auto_answer / notify / ignore
+```
+
+**AI Prompt设计**（关键：短小精悍，小模型可处理）：
+
+```
+System: 你是Claude Code会话看守助手。分析以下终端输出片段，返回JSON：
+{"type":"confirm|input|error|info","summary":"一句话中文摘要","action":"auto|notify|ignore","suggestion":"建议回答内容，仅confirm类型需要"}
+
+User: [Y/n] Do you want to create directory /tmp/test?
+```
+
+预期输出：
+```json
+{"type":"confirm","summary":"会话要求创建目录/tmp/test","action":"auto","suggestion":"Y"}
+```
+
+**上下文窗口管理**：
+
+- 不把整个会话历史喂给AI，只喂命中的**短片段**（最近100-200字符）
+- 为每个会话维护一个**滑动窗口摘要**：每N行输出，让AI生成一句状态描述，作为后续分析的上下文
+- 摘要链：`上次摘要 + 最近新输出 → 新摘要`，控制总上下文在2K token以内
+
+### 模块4：自动应答与用户交互
+
+**安全策略**：
+
+```typescript
+interface AutoAnswerRule {
+  pattern: string;          // 匹配模式（正则或关键词）
+  answer: string;           // 自动回答内容
+  sessionPattern?: string;  // 限定会话名/目录
+  enabled: boolean;
+}
+```
+
+预设规则（用户可在设置中增删改）：
+- `创建目录` → `Y`
+- `安装依赖 (npm install)` → `Y`
+- `覆盖文件` → `notify`（不自动回答，通知用户）
+
+**交互流程**：
+
+```
+AI分析结果: action=auto
+  → 查规则表 → 有匹配规则 → 自动发送 → 记录日志
+  → 无匹配规则 → 降级为notify
+
+AI分析结果: action=notify
+  → 触发通知链：
+    1. 桌面通知（Notification API）
+    2. 提示音（按优先级选不同音效）
+    3. TTS语音播报摘要
+    4. 等待用户响应（点击通知/语音回答）
+```
+
+### 模块5：语音交互模块（VoiceManager）
+
+**技术选型**：
+
+| 能力 | 方案A（浏览器原生） | 方案B（本地模型） | 推荐 |
+|------|-------------------|-----------------|------|
+| STT | Web Speech API | Whisper.cpp / Vosk | **B** — 离线可用、中文支持好 |
+| TTS | Web Speech API | edge-tts / piper / sherpa-onnx | **B** — 更自然、可控 |
+
+**理由**：
+- Web Speech API依赖Chrome在线服务，离线不可用且中文识别差
+- Whisper.cpp可本地运行tiny/base模型，延迟<1s，中文准确度好
+- edge-tts免费且音质极佳，或用piper纯离线
+
+**VoiceManager接口**：
+
+```typescript
+class VoiceManager {
+  private sttEngine: STTEngine;      // 语音识别引擎
+  private ttsEngine: TTSEngine;      // 语音合成引擎
+  private listening: boolean;        // 是否在监听
+  private wakeWordEnabled: boolean;  // 唤醒词模式
+
+  // 核心方法
+  async startListening(): Promise<void>;   // 开始语音识别
+  stopListening(): void;                    // 停止
+  async speak(text: string): Promise<void>; // TTS播报
+
+  // 唤醒词检测（轻量级，不用AI）
+  private detectWakeWord(audioBuffer: Buffer): boolean;
+
+  // 语音命令解析（交给AI）
+  private async parseVoiceCommand(text: string): Promise<VoiceCommand>;
+}
+
+interface VoiceCommand {
+  type: 'answer' | 'query' | 'control';
+  target?: string;      // 会话ID或名称
+  content: string;      // 回答内容或控制指令
+}
+```
+
+**语音交互场景**：
+
+1. **语音回答Claude**（最核心）：
+   - AI发通知："会话3等你确认是否删除文件"
+   - 用户说："确认" → STT → AI解析为`{type:'answer', target:'session-3', content:'Y'}` → 发送到pty
+
+2. **语音查询状态**：
+   - 用户说："现在什么情况" → AI从ProcessManager获取各会话状态 → 生成简短回复 → TTS播报
+
+3. **语音控制**：
+   - 用户说："静音" / "关闭会话3" → 解析为控制命令 → 执行
+
+**唤醒词方案**：
+- 持续监听太耗资源，用**按键触发**（如长按某个键或点击麦克风按钮）
+- 可选：用轻量唤醒词检测库（如porcupine），说"小助手"激活
+
+### 新增IPC通道
+
+```typescript
+// AI助手相关
+AI_GET_CONFIG: 'ai:getConfig',
+AI_UPDATE_CONFIG: 'ai:updateConfig',
+AI_STATUS: 'ai:status',              // 主进程→渲染：AI健康状态推送
+AI_ALERT_ANALYZED: 'ai:alertAnalyzed', // 主进程→渲染：AI分析后的告警
+
+// 语音交互相关
+VOICE_START_LISTENING: 'voice:startListening',
+VOICE_STOP_LISTENING: 'voice:stopListening',
+VOICE_SPEAK: 'voice:speak',
+VOICE_RESULT: 'voice:result',         // 主进程→渲染：语音识别结果
+VOICE_COMMAND: 'voice:command',       // 主进程→渲染：解析后的语音命令
+```
+
+### 配置UI增强（渲染进程）
+
+现有AITab需要增加：
+1. **心跳配置**：心跳间隔、超时阈值、不健康判定次数
+2. **自动应答规则表**：增删改预设规则
+3. **语音设置**：STT/TTS引擎选择、唤醒词开关、语音速度/音量
+4. **AI状态灯**：实时显示🟢/🟡/🔴，点击可查看延迟详情
+
+### 依赖项与风险
+
+| 项目 | 依赖 | 风险 | 缓解 |
+|------|------|------|------|
+| 本地模型 | 用户自行部署Ollama/vLLM | 未安装则AI功能不可用 | 心跳失败时降级为纯规则模式，不阻塞基础功能 |
+| Whisper.cpp | whisper.cpp Node绑定 或 调用本地API | 编译/安装复杂 | 优先用Ollama的whisper模型（复用同一服务），或提供Web Speech API回退 |
+| TTS | edge-tts(npm) 或 piper | edge-tts需联网 | piper作为离线备选 |
+| 性能 | 语音+AI同时运行 | CPU/内存占用 | 语音检测用VAD（静音跳过），AI推理串行化（排队处理） |
+
+### 实施步骤
+
+1. **Step 1**：AIAssistantManager骨架 + 心跳监控 + 配置迁移（从localStorage到主进程）
+2. **Step 2**：输出分析模块 + 自动应答规则
+3. **Step 3**：桌面通知 + 提示音分级
+4. **Step 4**：TTS语音播报（单向：AI→用户）
+5. **Step 5**：STT语音识别 + 语音命令→操作会话（双向交互）
+
+每步独立可测试，Step 1-3 构成看守闭环，Step 4-5 加上语音能力。
+
+---
+
 ## 高优先级
 
 ### 1. ESC 发送功能优化
@@ -163,4 +430,4 @@
 
 ---
 
-*最后更新：2026-04-19*
+*最后更新：2026-04-22*
