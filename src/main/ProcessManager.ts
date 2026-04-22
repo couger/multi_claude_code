@@ -156,8 +156,11 @@ class ProcessManager {
     };
 
     try {
+      // 设置终端环境变量 - vt100 可以保留颜色但可能有不同的回显行为
+      const ptyEnv = { ...process.env, TERM: 'vt100' };
+
       const ptyProcess = pty.spawn(command, parsedArgs, {
-        name: 'xterm-256color', cols: 120, rows: 30, cwd: workDir, env: process.env,
+        name: 'xterm-256color', cols: 120, rows: 30, cwd: workDir, env: ptyEnv,
       });
 
       session.pty = ptyProcess;

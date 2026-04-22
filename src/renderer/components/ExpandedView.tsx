@@ -185,14 +185,8 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
         window.electronAPI.sendInput(session.id, data);
       });
 
-      // 处理键盘快捷键 - Ctrl+C 复制，Ctrl+V 粘贴，Shift+Enter 多行
+      // 处理键盘快捷键 - Ctrl+C 复制（禁用默认复制）
       terminal.onKey(({ domEvent, key }) => {
-        // Shift+Enter 发送换行符（而非回车），用于多行输入
-        if (domEvent.shiftKey && domEvent.key === 'Enter') {
-          domEvent.preventDefault();
-          window.electronAPI.sendInput(session.id, '\n');
-          return;
-        }
         // Ctrl+C 复制选中文本
         if (domEvent.ctrlKey && (domEvent.key === 'c' || domEvent.key === 'C')) {
           const selection = terminal.getSelection();
@@ -201,14 +195,10 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
           }
           return;
         }
-        // Ctrl+V 粘贴
+        // Ctrl+V 粘贴 - 只阻止默认行为，避免 onData 重复处理
         if (domEvent.ctrlKey && (domEvent.key === 'v' || domEvent.key === 'V')) {
           domEvent.preventDefault();
-          navigator.clipboard.readText().then(text => {
-            if (text) {
-              window.electronAPI.sendInput(session.id, text);
-            }
-          }).catch(() => { /* ignore */ });
+          // 不在这里处理，让 onData 处理粘贴事件
           return;
         }
       });

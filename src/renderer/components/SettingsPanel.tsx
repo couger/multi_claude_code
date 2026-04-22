@@ -553,6 +553,7 @@ const AITab: React.FC = () => {
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testError, setTestError] = useState<string>('');
   const [testResponse, setTestResponse] = useState<string>('');
+  const [showTestModal, setShowTestModal] = useState(false);
 
   // 提示词相关状态（暂未实现）
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -845,24 +846,51 @@ const AITab: React.FC = () => {
           >
             {testing ? '测试中...' : '测试连接'}
           </button>
-          {testResult === 'success' && (
-            <span className="text-xs text-green-400">✓ 连接成功</span>
-          )}
-          {testResult === 'error' && (
-            <span className="text-xs text-red-400">✗ 连接失败</span>
+          {testResult && (
+            <button
+              onClick={() => setShowTestModal(true)}
+              className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
+                testResult === 'success'
+                  ? 'bg-green-600 text-white hover:bg-green-500'
+                  : 'bg-red-600 text-white hover:bg-red-500'
+              }`}
+            >
+              {testResult === 'success' ? '✓ 查看结果' : '✗ 查看结果'}
+            </button>
           )}
         </div>
-        {testError && (
-          <div className="text-xs text-red-400 p-2 bg-red-900/20 rounded break-all">
-            {testError}
-          </div>
-        )}
-        {testResponse && (
-          <div className="text-xs text-green-400 p-2 bg-green-900/20 rounded break-all">
-            {testResponse}
-          </div>
-        )}
       </div>
+
+      {/* 测试结果模态窗口 */}
+      {showTestModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowTestModal(false)}>
+          <div className="bg-dark-800 border border-dark-600 rounded-lg p-4 max-w-lg w-full mx-4 max-h-[70vh] overflow-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium">测试结果</h3>
+              <button
+                onClick={() => setShowTestModal(false)}
+                className="p-1 hover:bg-dark-700 rounded"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            {testError && (
+              <div className="text-sm text-red-400 p-3 bg-red-900/30 rounded mb-3 break-all">
+                <strong className="block mb-1">错误:</strong>
+                {testError}
+              </div>
+            )}
+            {testResponse && (
+              <div className="text-sm text-green-400 p-3 bg-green-900/30 rounded break-all">
+                <strong className="block mb-1">响应:</strong>
+                {testResponse}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 默认提示词 */}
       <div className="space-y-3">
