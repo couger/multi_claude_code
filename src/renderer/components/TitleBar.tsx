@@ -1,8 +1,27 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 const TitleBar: React.FC = () => {
   // 检测 Electron 环境
   const isElectron = !!(window as any).electronAPI?.isElectron;
+  
+  // 麦克风状态
+  const [isListening, setIsListening] = useState(false);
+
+  // 启动录音
+  const startRecording = () => {
+    if (window.electronAPI.startListening) {
+      window.electronAPI.startListening();
+      setIsListening(true);
+    }
+  };
+
+  // 停止录音
+  const stopRecording = () => {
+    if (window.electronAPI.stopListening) {
+      window.electronAPI.stopListening();
+      setIsListening(false);
+    }
+  };
   return (
     <div className="h-8 bg-dark-800 flex items-center justify-between px-4 drag-region border-b border-dark-700">
       {/* 左侧图标和标题 */}
@@ -30,6 +49,18 @@ const TitleBar: React.FC = () => {
       {/* 右侧窗口控制按钮 - 仅 Electron 环境显示 */}
       {isElectron && (
         <div className="flex items-center gap-1 no-drag">
+          {/* 麦克风按钮 - 语音交互 */}
+          <button
+            onClick={isListening ? stopRecording : startRecording}
+            className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${
+              isListening ? 'bg-green-600 text-white' : 'hover:bg-dark-600'
+            }`}
+            title={isListening ? '点击停止录音' : '点击开始语音输入'}
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-4a6 6 0 01-3.162-5.288m6.162 2.288l5.272 5.272m-5.272-5.272A6 6 0 0112 5z" />
+            </svg>
+          </button>
           {/* 一键贴边隐藏按钮 */}
           <button
             onClick={() => window.electronAPI.hideWindowToEdge()}

@@ -70,6 +70,11 @@ export interface ElectronAPI {
   getSelectedIPs: () => Promise<string[]>;
   broadcastGeneralSettings: (settings: any) => void;
 
+  // 语音交互
+  startListening: () => void;
+  stopListening: () => void;
+  speakText: (text: string) => Promise<string>;
+
   // 标记 Electron 环境
   isElectron?: boolean;
 }
