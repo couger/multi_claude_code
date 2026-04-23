@@ -1,296 +1,415 @@
 /**
- * AI 助手管理器 - 核心调度器
+ * AI 助手管理器 - 负责 AI 核心功能调度
  */
 
-import { sendToRenderer } from './index';
+import { BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from './constants';
-import { configManager } from './ConfigManager';
 import { AlertType } from '../shared/constants';
-import type { AIConfig, AIStatus, AIAlertAnalysis, AutoAnswerRule } from '../shared/types';
-import { AIHealthStatus } from '../shared/types';
-import type { SessionInfo } from '../shared/types';
+import { configManager } from './ConfigManager';
+
+export interface AIConfig {
+  enabled: boolean;
+  provider: 'openai' | 'anthropic' | 'custom';
+  apiKey: string;
+  apiBase: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  contextLength: number;
+  heartbeatInterval: number;  // 心跳间隔（秒）
+  heartbeatTimeout: number;   // 心跳超时（秒）
+  unhealthyThreshold: number; // 连续失败次数阈值
+}
+
+export interface AIStatus {
+  healthy: boolean;
+  latency: number;  // 延迟（毫秒）
+  lastCheck: Date | null;
+  error?: string;
+}
+
+export interface AlertAnalysis {
+  sessionId: string;
+  type: 'confirm' | 'input' | 'error' | 'info';
+  summary: string;
+  action: 'auto' | 'notify' | 'ignore';
+  suggestion?: string;
+}
+
+export interface AutoAnswerRule {
+  id: string;
+  pattern: string;
+  answer: string;
+  sessionPattern?: string;
+  enabled: boolean;
+}
 
 const DEFAULT_AI_CONFIG: AIConfig = {
-  apiUrl: 'http://localhost:11434',
-  modelName: 'llama3',
-  heartbeatInterval: 30000,
-  requestTimeout: 5000,
-  unhealthyThreshold: 3,
-  recoverThreshold: 2,
-  latencyWarningThreshold: 3000,
   enabled: false,
+  provider: 'openai',
+  apiKey: '',
+  apiBase: '',
+  model: 'gpt-4o',
+  temperature: 0.7,
+  maxTokens: 4096,
+  contextLength: 8192,
+  heartbeatInterval: 30,
+  heartbeatTimeout: 5,
+  unhealthyThreshold: 3,
 };
 
-class AIAssistantManager {
-  private config: AIConfig;
-  private health: AIHealthStatus = AIHealthStatus.UNHEALTHY;
-  private latency: number = 0;
-  private lastHeartbeat: Date | null = null;
-  private heartbeatTimer: NodeJS.Timeout | null = null;
-  private consecutiveFailures: number = 0;
-  private consecutiveSuccesses: number = 0;
-  private autoAnswerRules: AutoAnswerRule[] = [];
-  private started: boolean = false;
+const DEFAULT_AUTO_ANSWER_RULES: AutoAnswerRule[] = [
+  { id: '1', pattern: '创建目录|create.*directory', answer: 'Y', enabled: true },
+  { id: '2', pattern: '安装依赖|install.*dependencies|npm install', answer: 'Y', enabled: true },
+  { id: '3', pattern: '覆盖文件|overwrite.*file', answer: 'n', enabled: false },
+];
 
-  constructor() {
+export class AIAssistantManager {
+  private config: AIConfig;
+  private status: AIStatus = {
+    healthy: false,
+    latency: 0,
+    lastCheck: null,
+  };
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private consecutiveFailures = 0;
+  private consecutiveSuccesses = 0;
+  private mainWindow: BrowserWindow | null = null;
+  private autoAnswerRules: AutoAnswerRule[] = [...DEFAULT_AUTO_ANSWER_RULES];
+  private broadcastFn: (message: any) => void;
+
+  constructor(broadcastFn: (message: any) => void) {
+    this.broadcastFn = broadcastFn;
     this.config = this.loadConfig();
-    this.loadAutoAnswerRules();
+  }
+
+  setMainWindow(window: BrowserWindow) {
+    this.mainWindow = window;
   }
 
   private loadConfig(): AIConfig {
     const saved = configManager.get('aiConfig');
-    return saved ? { ...DEFAULT_AI_CONFIG, ...saved } : DEFAULT_AI_CONFIG;
+    return saved ? { ...DEFAULT_AI_CONFIG, ...saved } : { ...DEFAULT_AI_CONFIG };
   }
 
-  private loadAutoAnswerRules(): void {
-    const saved = configManager.get('autoAnswerRules') as AutoAnswerRule[] | undefined;
-    this.autoAnswerRules = saved && saved.length > 0 ? saved : this.getDefaultAutoAnswerRules();
-  }
-
-  private getDefaultAutoAnswerRules(): AutoAnswerRule[] {
-    return [
-      { id: '1', pattern: 'create directory', answer: 'Y', enabled: true },
-      { id: '2', pattern: 'npm install', answer: 'Y', enabled: true },
-      { id: '3', pattern: 'overwrite', answer: 'y', sessionPattern: undefined, enabled: false },
-    ];
-  }
-
-  private saveConfig(): void {
+  private saveConfig() {
     configManager.set('aiConfig', this.config);
-  }
-
-  private saveAutoAnswerRules(): void {
-    configManager.set('autoAnswerRules', this.autoAnswerRules);
-  }
-
-  start(): void {
-    if (this.started || !this.config.enabled) return;
-    this.started = true;
-    this.startHeartbeat();
-    console.log('[AIAssistant] 启动成功');
-  }
-
-  stop(): void {
-    this.stopHeartbeat();
-    this.started = false;
-    console.log('[AIAssistant] 已停止');
-  }
-
-  updateConfig(config: Partial<AIConfig>): void {
-    this.config = { ...this.config, ...config };
-    this.saveConfig();
-    if (!this.config.enabled && this.started) {
-      this.stop();
-    } else if (this.config.enabled && !this.started) {
-      this.start();
-    } else if (this.config.enabled && this.started) {
-      this.stopHeartbeat();
-      this.startHeartbeat();
-    }
   }
 
   getConfig(): AIConfig {
     return { ...this.config };
   }
 
+  updateConfig(updates: Partial<AIConfig>) {
+    this.config = { ...this.config, ...updates };
+    this.saveConfig();
+    if (this.config.enabled) {
+      this.start();
+    } else {
+      this.stop();
+    }
+  }
+
   getStatus(): AIStatus {
-    return {
-      health: this.health,
-      latency: this.latency,
-      lastHeartbeat: this.lastHeartbeat?.toISOString() || null,
-      consecutiveFailures: this.consecutiveFailures,
-      consecutiveSuccesses: this.consecutiveSuccesses,
-    };
+    return { ...this.status };
   }
 
-  getAutoAnswerRules(): AutoAnswerRule[] {
-    return [...this.autoAnswerRules];
+  // 启动 AI 助手
+  start() {
+    if (!this.config.enabled) return;
+    this.startHeartbeat();
+    console.log('[AIAssistantManager] 已启动');
   }
 
-  updateAutoAnswerRules(rules: AutoAnswerRule[]): void {
-    this.autoAnswerRules = rules;
-    this.saveAutoAnswerRules();
+  // 停止 AI 助手
+  stop() {
+    this.stopHeartbeat();
+    this.status = { healthy: false, latency: 0, lastCheck: null };
+    console.log('[AIAssistantManager] 已停止');
   }
 
-  async query(prompt: string, systemPrompt?: string): Promise<string> {
-    const startTime = Date.now();
-    try {
-      const response = await this.makeRequest(prompt, systemPrompt);
-      this.latency = Date.now() - startTime;
-      this.handleHealthChange(true);
-      return response;
-    } catch (error) {
-      this.latency = Date.now() - startTime;
-      this.handleHealthChange(false);
-      throw error;
-    }
+  // 心跳监控
+  private startHeartbeat() {
+    if (this.heartbeatTimer) return;
+    const intervalMs = this.config.heartbeatInterval * 1000;
+    this.heartbeatTimer = setInterval(() => this.checkHealth(), intervalMs);
+    // 立即执行一次健康检查
+    this.checkHealth();
   }
 
-  private async makeRequest(prompt: string, systemPrompt?: string): Promise<string> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.config.requestTimeout);
-
-    try {
-      const body: Record<string, unknown> = {
-        model: this.config.modelName,
-        prompt: prompt,
-        stream: false,
-        options: { num_predict: 50, temperature: 0.3 },
-      };
-      if (systemPrompt) body.system = systemPrompt;
-
-      const response = await fetch(`${this.config.apiUrl}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
-      const data = await response.json() as { response?: string };
-      return data.response || '';
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  private startHeartbeat(): void {
-    this.heartbeatTimer = setInterval(() => {
-      this.checkHealth().catch(e => console.error('[AIAssistant] 心跳检查失败:', e));
-    }, this.config.heartbeatInterval);
-    this.checkHealth().catch(e => console.error('[AIAssistant] 初始心跳失败:', e));
-  }
-
-  private stopHeartbeat(): void {
+  private stopHeartbeat() {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
   }
 
-  private async checkHealth(): Promise<boolean> {
+  private async checkHealth() {
+    if (!this.config.enabled || !this.config.apiKey) {
+      this.updateStatus(false, 0, '未配置 API');
+      return;
+    }
+
     const startTime = Date.now();
     try {
-      const result = await this.makeRequest('ok');
-      this.latency = Date.now() - startTime;
-      const healthy = result.length > 0;
-      this.handleHealthChange(healthy);
-      return healthy;
-    } catch (error) {
-      this.latency = Date.now() - startTime;
-      this.handleHealthChange(false);
-      return false;
+      const result = await this.testConnection();
+      const latency = Date.now() - startTime;
+
+      if (result.success) {
+        this.consecutiveFailures = 0;
+        this.consecutiveSuccesses++;
+        this.updateStatus(true, latency);
+
+        // 连续2次成功，恢复为健康
+        if (this.consecutiveSuccesses >= 2 && !this.status.healthy) {
+          this.notifyRecovery();
+        }
+      } else {
+        this.handleHealthCheckFailure(result.error || '连接失败');
+      }
+    } catch (error: any) {
+      this.handleHealthCheckFailure(error.message);
     }
   }
 
-  private handleHealthChange(success: boolean): void {
-    if (success) {
-      this.consecutiveSuccesses++;
-      this.consecutiveFailures = 0;
-      this.lastHeartbeat = new Date();
+  private handleHealthCheckFailure(error: string) {
+    this.consecutiveFailures++;
+    this.consecutiveSuccesses = 0;
 
-      if (this.consecutiveSuccesses >= this.config.recoverThreshold && this.health !== AIHealthStatus.HEALTHY) {
-        this.updateHealth(AIHealthStatus.HEALTHY);
-        this.notifyAIRecovered();
-      } else if (this.latency > this.config.latencyWarningThreshold && this.health === AIHealthStatus.HEALTHY) {
-        this.updateHealth(AIHealthStatus.DEGRADED);
-      }
-    } else {
-      this.consecutiveFailures++;
-      this.consecutiveSuccesses = 0;
-
-      if (this.consecutiveFailures >= this.config.unhealthyThreshold && this.health !== AIHealthStatus.UNHEALTHY) {
-        this.updateHealth(AIHealthStatus.UNHEALTHY);
-        this.notifyAIUnhealthy('连续多次请求失败');
-      }
+    if (this.consecutiveFailures >= this.config.unhealthyThreshold && this.status.healthy) {
+      this.updateStatus(false, 0, error);
+      this.notifyUnhealthy(error);
     }
   }
 
-  private updateHealth(health: AIHealthStatus): void {
-    this.health = health;
-    this.broadcastStatus();
+  private updateStatus(healthy: boolean, latency: number, error?: string) {
+    const changed = this.status.healthy !== healthy;
+    this.status = {
+      healthy,
+      latency,
+      lastCheck: new Date(),
+      error,
+    };
+    if (changed) {
+      this.broadcastAIStatus();
+    }
   }
 
-  private broadcastStatus(): void {
-    sendToRenderer(IPC_CHANNELS.AI_STATUS, this.getStatus());
+  private broadcastAIStatus() {
+    const message = {
+      channel: IPC_CHANNELS.AI_STATUS,
+      data: this.status,
+    };
+    this.broadcastFn(message);
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send(IPC_CHANNELS.AI_STATUS, this.status);
+    }
   }
 
-  private notifyAIUnhealthy(reason: string): void {
-    sendToRenderer(IPC_CHANNELS.ALERT, {
-      sessionId: '',
-      type: AlertType.ERROR,
-      message: `AI助手不可用: ${reason}，看门功能暂停`,
-    });
+  private notifyUnhealthy(reason: string) {
+    const message = {
+      channel: IPC_CHANNELS.ALERT,
+      data: {
+        sessionId: 'ai-assistant',
+        type: AlertType.ERROR,
+        message: `AI 助手无响应: ${reason}，看守功能暂停`,
+        timestamp: new Date(),
+      },
+    };
+    this.broadcastFn(message);
   }
 
-  private notifyAIRecovered(): void {
-    sendToRenderer(IPC_CHANNELS.ALERT, {
-      sessionId: '',
-      type: AlertType.TASK_COMPLETE,
-      message: 'AI助手已恢复',
-    });
+  private notifyRecovery() {
+    const message = {
+      channel: IPC_CHANNELS.ALERT,
+      data: {
+        sessionId: 'ai-assistant',
+        type: AlertType.TASK_COMPLETE,
+        message: 'AI 助手已恢复，看守功能继续运行',
+        timestamp: new Date(),
+      },
+    };
+    this.broadcastFn(message);
   }
 
-  async analyzeAlert(sessionId: string, text: string): Promise<AIAlertAnalysis | null> {
-    if (!this.config.enabled || this.health === AIHealthStatus.UNHEALTHY) {
+  // 测试 AI 连接
+  async testConnection(): Promise<{ success: boolean; error?: string; response?: any }> {
+    if (!this.config.apiKey) {
+      return { success: false, error: 'API Key 未配置' };
+    }
+
+    const url = this.getRequestUrl();
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.config.provider === 'anthropic' ? {
+            'x-api-key': this.config.apiKey,
+            'anthropic-version': '2023-06-01',
+          } : {
+            'Authorization': `Bearer ${this.config.apiKey}`,
+          }),
+        },
+        body: JSON.stringify({
+          model: this.config.model,
+          messages: [{ role: 'user', content: 'Hi' }],
+          max_tokens: 5,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return { success: true, response: data };
+      } else {
+        const data = await response.json().catch(() => ({}));
+        return { success: false, error: `HTTP ${response.status}: ${data.error?.message || JSON.stringify(data)}` };
+      }
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  private getRequestUrl(): string {
+    if (this.config.provider === 'anthropic') {
+      return 'https://api.anthropic.com/v1/messages';
+    }
+    let base = this.config.apiBase || 'https://api.openai.com/v1/chat/completions';
+    if (base.endsWith('/')) base = base.slice(0, -1);
+    if (!base.includes('/chat/completions')) {
+      base = base + '/chat/completions';
+    }
+    return base;
+  }
+
+  // AI 查询
+  async query(prompt: string, systemPrompt?: string): Promise<string> {
+    if (!this.config.enabled || !this.status.healthy) {
+      return '';
+    }
+
+    const url = this.getRequestUrl();
+    const isAnthropic = this.config.provider === 'anthropic';
+
+    const body = isAnthropic ? {
+      model: this.config.model,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: this.config.maxTokens,
+      system: systemPrompt,
+    } : {
+      model: this.config.model,
+      messages: [
+        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: this.config.maxTokens,
+      temperature: this.config.temperature,
+    };
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(isAnthropic ? {
+        'x-api-key': this.config.apiKey,
+        'anthropic-version': '2023-06-01',
+      } : {
+        'Authorization': `Bearer ${this.config.apiKey}`,
+      }),
+    };
+
+    try {
+      const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      return isAnthropic ? data.content?.[0]?.text : data.choices?.[0]?.message?.content || '';
+    } catch (error: any) {
+      console.error('[AIAssistantManager] 查询失败:', error);
+      return '';
+    }
+  }
+
+  // 分析告警
+  async analyzeAlert(sessionId: string, text: string): Promise<AlertAnalysis | null> {
+    if (!this.config.enabled || !this.status.healthy) {
       return null;
     }
 
-    const systemPrompt = `你是Claude Code会话看守助手。分析以下终端输出片段，返回JSON：
-{"type":"confirm|input|error|info","summary":"一句话中文摘要","action":"auto|notify|ignore","suggestion":"建议回答内容仅confirm类型需要"}
+    const systemPrompt = `你是 Claude Code 会话看守助手。分析以下终端输出片段，返回 JSON：
+{"type":"confirm|input|error|info","summary":"一句话中文摘要","action":"auto|notify|ignore","suggestion":"建议回答内容，仅confirm类型需要"}
 
-注意：仅对需要用户确认的类型返回suggestion`;
+注意：只返回 JSON，不要其他内容。`;
+
+    const result = await this.query(text, systemPrompt);
+    if (!result) return null;
 
     try {
-      const result = await this.query(text, systemPrompt);
-      const parsed = this.parseAIResponse(result);
-      if (parsed) {
-        sendToRenderer(IPC_CHANNELS.AI_ALERT_ANALYZED, { sessionId, ...parsed });
-        return { sessionId, ...parsed };
-      }
-    } catch (e) {
-      console.error('[AIAssistant] 分析告警失败:', e);
-    }
-    return null;
-  }
+      const parsed = JSON.parse(result);
+      const analysis: AlertAnalysis = {
+        sessionId,
+        type: parsed.type || 'info',
+        summary: parsed.summary || '',
+        action: parsed.action || 'notify',
+        suggestion: parsed.suggestion,
+      };
 
-  private parseAIResponse(response: string): AIAlertAnalysis['type'] extends infer T ? Pick<AIAlertAnalysis, 'type' | 'summary' | 'action' | 'suggestion'> | null : never {
-    try {
-      const match = response.match(/\{[^}]+\}/);
-      if (match) {
-        const obj = JSON.parse(match[0]);
-        if (obj.type && obj.summary && obj.action) {
-          return {
-            type: obj.type,
-            summary: obj.summary,
-            action: obj.action,
-            suggestion: obj.suggestion,
-          };
+      // 检查是否需要自动回答
+      if (analysis.action === 'auto' && analysis.suggestion) {
+        const matched = this.checkAutoAnswerRules(text);
+        if (matched) {
+          return { ...analysis, action: 'auto', suggestion: matched };
         }
       }
-    } catch { /* ignore */ }
-    return null;
+
+      // 通知渲染进程
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send(IPC_CHANNELS.AI_ALERT_ANALYZED, analysis);
+      }
+
+      return analysis;
+    } catch {
+      return null;
+    }
   }
 
-  findAutoAnswer(sessionName: string, matchedText: string): string | null {
+  // 自动应答规则
+  private checkAutoAnswerRules(text: string): string | null {
     for (const rule of this.autoAnswerRules) {
       if (!rule.enabled) continue;
-      if (rule.sessionPattern && !sessionName.toLowerCase().includes(rule.sessionPattern.toLowerCase())) {
-        continue;
-      }
-      if (new RegExp(rule.pattern, 'i').test(matchedText)) {
-        return rule.answer;
+      try {
+        const regex = new RegExp(rule.pattern, 'i');
+        if (regex.test(text)) {
+          return rule.answer;
+        }
+      } catch {
+        // 忽略无效正则
       }
     }
     return null;
   }
 
-  cleanup(): void {
+  getAutoAnswerRules(): AutoAnswerRule[] {
+    return [...this.autoAnswerRules];
+  }
+
+  updateAutoAnswerRule(ruleId: string, updates: Partial<AutoAnswerRule>) {
+    const index = this.autoAnswerRules.findIndex(r => r.id === ruleId);
+    if (index >= 0) {
+      this.autoAnswerRules[index] = { ...this.autoAnswerRules[index], ...updates };
+    }
+  }
+
+  addAutoAnswerRule(rule: Omit<AutoAnswerRule, 'id'>) {
+    this.autoAnswerRules.push({ ...rule, id: Date.now().toString() });
+  }
+
+  deleteAutoAnswerRule(ruleId: string) {
+    this.autoAnswerRules = this.autoAnswerRules.filter(r => r.id !== ruleId);
+  }
+
+  cleanup() {
     this.stop();
   }
 }
 
-export const aiAssistantManager = new AIAssistantManager();
+export const aiAssistantManager = new AIAssistantManager(() => {});

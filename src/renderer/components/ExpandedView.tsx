@@ -31,7 +31,10 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
   const handleEscConfirmClose = useCallback(() => {
     setShowEscConfirm(false);
     if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
-    xtermRef.current?.focus();
+    // 延迟恢复焦点确保弹窗已关闭
+    setTimeout(() => {
+      xtermRef.current?.focus();
+    }, 50);
   }, []);
 
   // 处理发送ESC
@@ -40,12 +43,13 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
     setShowEscConfirm(false);
     if (escConfirmTimerRef.current) clearTimeout(escConfirmTimerRef.current);
 
-    // 发送ESC字符
-    window.electronAPI.sendInput(session.id, '\x1b');
-
-    // 恢复终端焦点
+    // 发送ESC字符 - 使用 requestAnimationFrame 确保终端焦点已恢复
     requestAnimationFrame(() => {
-      xtermRef.current?.focus();
+      window.electronAPI.sendInput(session.id, '\x1b');
+      // 延迟恢复终端焦点，确保字符已发送
+      setTimeout(() => {
+        xtermRef.current?.focus();
+      }, 50);
     });
   }, [session.id]);
 
