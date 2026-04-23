@@ -11,16 +11,48 @@ import { DisplayMode, AlertType, AlertNotifyMode, AlertSeverity } from '../../sh
 
 type TabKey = 'general' | 'groups' | 'performance' | 'remote' | 'alerts' | 'ai';
 
-// AI配置接口
+// AI配置接口（本地模型版本）
 interface AIConfig {
   enabled: boolean;
-  provider: 'openai' | 'anthropic' | 'custom';
-  apiKey: string;
-  apiBase: string;
-  model: string;
-  temperature: number;
-  maxTokens: number;
-  contextLength: number;
+  apiUrl: string;
+  modelName: string;
+  heartbeatInterval: number;
+  requestTimeout: number;
+  unhealthyThreshold: number;
+  recoverThreshold: number;
+  latencyWarningThreshold: number;
+}
+
+// AI状态
+interface AIStatus {
+  health: 'healthy' | 'degraded' | 'unhealthy';
+  latency: number;
+  lastHeartbeat: string | null;
+  consecutiveFailures: number;
+  consecutiveSuccesses: number;
+}
+
+// 自动应答规则
+interface AutoAnswerRule {
+  id: string;
+  pattern: string;
+  answer: string;
+  sessionPattern?: string;
+  enabled: boolean;
+}
+
+// 通知配置
+interface NotificationConfig {
+  soundEnabled: boolean;
+  notificationEnabled: boolean;
+}
+
+// 语音配置
+interface VoiceConfig {
+  ttsEngine: 'edge-tts' | 'piper' | 'web-speech';
+  speechRate: number;
+  speechVolume: number;
+  enabled: boolean;
 }
 
 interface SettingsPanelProps {
@@ -1807,7 +1839,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
       <div
-        className="bg-dark-800 border border-dark-600 rounded-lg w-[560px] max-h-[85vh] overflow-hidden shadow-2xl flex flex-col"
+        className="bg-dark-800 border border-dark-600 rounded-lg w-[560px] h-[600px] max-h-[85vh] shadow-2xl flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}

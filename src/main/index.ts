@@ -17,6 +17,9 @@ import { getLocalIPv4s } from './utils';
 import { createTray, updateTrayMenu, destroyTray, ensureWindowVisible, getDisplayAtCursor } from './TrayManager';
 import { HttpServerManager, checkPortInUse } from './HttpServer';
 import { diagnostics } from './Diagnostics';
+import { aiAssistantManager } from './AIAssistantManager';
+import { notificationManager } from './NotificationManager';
+import { voiceManager } from './VoiceManager';
 
 let mainWindow: BrowserWindow | null = null;
 let windowManager: WindowManager | null = null;
@@ -326,6 +329,44 @@ function initIPC() {
     if (!mainWindow || !windowManager?.isHidden()) return;
     windowManager.restore();
   });
+
+  // ---------- AI 助手 ----------
+
+  ipcMain.handle(IPC_CHANNELS.AI_GET_CONFIG, async () => aiAssistantManager.getConfig());
+  ipcMain.handle(IPC_CHANNELS.AI_UPDATE_CONFIG, async (_: any, config: any) => {
+    aiAssistantManager.updateConfig(config);
+    return { success: true };
+  });
+  ipcMain.handle(IPC_CHANNELS.AI_STATUS, async () => aiAssistantManager.getStatus());
+  ipcMain.handle('ai:getAutoAnswerRules', async () => aiAssistantManager.getAutoAnswerRules());
+  ipcMain.handle('ai:updateAutoAnswerRules', async (_: any, rules: any[]) => {
+    aiAssistantManager.updateAutoAnswerRules(rules);
+    return { success: true };
+  });
+
+  // ---------- 通知管理 ----------
+  ipcMain.handle('notification:getConfig', async () => notificationManager.getConfig());
+  ipcMain.handle('notification:updateConfig', async (_: any, config: any) => {
+    notificationManager.updateConfig(config);
+    return { success: true };
+  });
+
+  // ---------- 语音管理 ----------
+  ipcMain.handle('voice:getConfig', async () => voiceManager.getConfig());
+  ipcMain.handle('voice:updateConfig', async (_: any, config: any) => {
+    voiceManager.updateConfig(config);
+    return { success: true };
+  });
+  ipcMain.handle(IPC_CHANNELS.VOICE_SPEAK, async (_: any, text: string) => {
+    await voiceManager.speak(text);
+    return { success: true };
+  });
+  ipcMain.on(IPC_CHANNELS.VOICE_START_LISTENING, () => voiceManager.startListening());
+  ipcMain.on(IPC_CHANNELS.VOICE_STOP_LISTENING, () => voiceManager.stopListening());
+  ipcMain.handle('voice:result', async (_: any, text: string) => {
+    voiceManager.handleVoiceResult(text);
+    return { success: true };
+  });
 }
 
 // ==================== 应用启动 ====================
@@ -361,6 +402,11 @@ app.whenReady().then(() => {
   createWindow();
   initIPC();
 
+  // 自动启动 AI 助手（如果已启用配置）
+  if (aiAssistantManager.getConfig().enabled) {
+    aiAssistantManager.start();
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -384,6 +430,7 @@ process.on('unhandledRejection', (reason) => {
 app.on('before-quit', () => {
   diagnostics.stopReporting();
   httpServerManager?.stop(true);
+  aiAssistantManager.cleanup();
   if (processManager) {
     processManager.cleanup();
     processManager.killAllSessions();

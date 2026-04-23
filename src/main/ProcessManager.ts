@@ -13,6 +13,9 @@ import { IPC_CHANNELS, DEFAULT_CONFIG } from './constants';
 import { SessionStatus, AlertType } from '../shared/constants';
 import { diagnostics } from './Diagnostics';
 import type { SessionInfo, SessionInternal, CreateSessionOptions, WorkDirConflict, ExternalClaudeCheckResult } from '../shared/types';
+import { aiAssistantManager } from './AIAssistantManager';
+import { notificationManager } from './NotificationManager';
+import { voiceManager } from './VoiceManager';
 
 class ProcessManager {
   sessions: Map<string, SessionInternal>;
@@ -278,11 +281,10 @@ class ProcessManager {
 
     sendToRenderer(IPC_CHANNELS.SESSION_STATUS, { id, status: session.status, exitCode });
 
-    sendToRenderer(IPC_CHANNELS.ALERT, {
-      sessionId: id,
-      type: exitCode === 0 ? AlertType.TASK_COMPLETE : AlertType.ERROR,
-      message: exitCode === 0 ? `任务 "${session.name}" 已完成` : `任务 "${session.name}" 异常退出 (code: ${exitCode})`,
-    });
+    const alertType = exitCode === 0 ? AlertType.TASK_COMPLETE : AlertType.ERROR;
+    const message = exitCode === 0 ? `任务 "${session.name}" 已完成` : `任务 "${session.name}" 异常退出 (code: ${exitCode})`;
+    sendToRenderer(IPC_CHANNELS.ALERT, { sessionId: id, type: alertType, message });
+    notificationManager.notify(id, alertType, message);
   }
 
   private checkAlerts(id: string, data: string) {
@@ -293,6 +295,9 @@ class ProcessManager {
     for (const pattern of inputPatterns) {
       if (pattern.test(data)) {
         sendToRenderer(IPC_CHANNELS.ALERT, { sessionId: id, type: AlertType.USER_INPUT, message: `任务 "${session.name}" 等待输入` });
+        notificationManager.notify(id, AlertType.USER_INPUT, `任务 "${session.name}" 等待输入`);
+        // AI 分析 + 自动应答
+        this.handleAIAnalysis(id, session.name, data).catch(e => console.error('[ProcessManager] AI分析失败:', e));
         break;
       }
     }
@@ -301,8 +306,33 @@ class ProcessManager {
     for (const pattern of errorPatterns) {
       if (pattern.test(data)) {
         sendToRenderer(IPC_CHANNELS.ALERT, { sessionId: id, type: AlertType.WARNING, message: `任务 "${session.name}" 出现错误` });
+        notificationManager.notify(id, AlertType.WARNING, `任务 "${session.name}" 出现错误`);
         break;
       }
+    }
+  }
+
+  private async handleAIAnalysis(sessionId: string, sessionName: string, matchedText: string): Promise<void> {
+    // 先检查自动应答规则
+    const autoAnswer = aiAssistantManager.findAutoAnswer(sessionName, matchedText);
+    if (autoAnswer) {
+      this.sendInput(sessionId, autoAnswer);
+      sendToRenderer(IPC_CHANNELS.ALERT, { sessionId, type: AlertType.TASK_COMPLETE, message: `已自动回答: ${autoAnswer}` });
+      voiceManager.speak(`已自动回答 ${autoAnswer}`);
+      return;
+    }
+
+    // 发送 AI 分析
+    const analysis = await aiAssistantManager.analyzeAlert(sessionId, matchedText);
+    if (!analysis) return;
+
+    if (analysis.action === 'auto' && analysis.suggestion) {
+      this.sendInput(sessionId, analysis.suggestion);
+      sendToRenderer(IPC_CHANNELS.ALERT, { sessionId, type: AlertType.TASK_COMPLETE, message: `AI自动回答: ${analysis.suggestion}` });
+      voiceManager.speak(`AI自动回答: ${analysis.summary}`);
+    } else if (analysis.action === 'notify') {
+      sendToRenderer(IPC_CHANNELS.ALERT, { sessionId, type: AlertType.USER_INPUT, message: analysis.summary });
+      voiceManager.speak(analysis.summary);
     }
   }
 

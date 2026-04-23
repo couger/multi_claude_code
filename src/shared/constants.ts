@@ -138,6 +138,19 @@ export const IPC_CHANNELS = {
 
   // 托盘
   TRAY_CREATE_SESSION: 'tray:create-session',
+
+  // AI 助手
+  AI_GET_CONFIG: 'ai:getConfig',
+  AI_UPDATE_CONFIG: 'ai:updateConfig',
+  AI_STATUS: 'ai:status',
+  AI_ALERT_ANALYZED: 'ai:alertAnalyzed',
+
+  // 语音交互
+  VOICE_START_LISTENING: 'voice:startListening',
+  VOICE_STOP_LISTENING: 'voice:stopListening',
+  VOICE_SPEAK: 'voice:speak',
+  VOICE_RESULT: 'voice:result',
+  VOICE_COMMAND: 'voice:command',
 } as const;
 
 // ==================== 默认配置 ====================

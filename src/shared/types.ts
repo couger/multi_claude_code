@@ -165,3 +165,59 @@ export interface AppConfig {
   hideDirection?: string;
   [key: string]: unknown;
 }
+
+// ==================== AI 助手配置 ====================
+
+/** AI 健康状态 */
+export enum AIHealthStatus {
+  HEALTHY = 'healthy',
+  DEGRADED = 'degraded', // 高延迟
+  UNHEALTHY = 'unhealthy',
+}
+
+/** AI 配置 */
+export interface AIConfig {
+  /** 本地模型 API 地址 */
+  apiUrl: string;
+  /** 模型名称 */
+  modelName: string;
+  /** 心跳间隔（毫秒） */
+  heartbeatInterval: number;
+  /** 单次请求超时（毫秒） */
+  requestTimeout: number;
+  /** 不健康判定连续失败次数 */
+  unhealthyThreshold: number;
+  /** 恢复判定连续成功次数 */
+  recoverThreshold: number;
+  /** 延迟预警阈值（毫秒） */
+  latencyWarningThreshold: number;
+  /** 是否启用 AI 助手 */
+  enabled: boolean;
+}
+
+/** AI 状态 */
+export interface AIStatus {
+  health: AIHealthStatus;
+  latency: number;
+  lastHeartbeat: string | null;
+  consecutiveFailures: number;
+  consecutiveSuccesses: number;
+}
+
+/** 自动应答规则 */
+export interface AutoAnswerRule {
+  id: string;
+  pattern: string;
+  answer: string;
+  sessionPattern?: string;
+  enabled: boolean;
+}
+
+/** AI 分析结果 */
+export interface AIAlertAnalysis {
+  sessionId: string;
+  type: 'confirm' | 'input' | 'error' | 'info';
+  summary: string;
+  action: 'auto' | 'notify' | 'ignore';
+  suggestion?: string;
+}
