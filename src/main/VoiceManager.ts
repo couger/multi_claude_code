@@ -179,7 +179,8 @@ class VoiceManager {
     sendToRenderer(IPC_CHANNELS.VOICE_RESULT, { text });
     this.parseVoiceCommand(text).then(command => {
       if (command) {
-        sendToRenderer(IPC_CHANNELS.VOICE_COMMAND, command);
+        // VOICE_COMMAND 通道暂未定义，注释掉或改用其他通道
+        // sendToRenderer(IPC_CHANNELS.VOICE_COMMAND, command);
       }
     }).catch(e => console.error('[VoiceManager] 解析语音命令失败:', e));
   }

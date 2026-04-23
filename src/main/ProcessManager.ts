@@ -314,7 +314,7 @@ class ProcessManager {
 
   private async handleAIAnalysis(sessionId: string, sessionName: string, matchedText: string): Promise<void> {
     // 先检查自动应答规则
-    const autoAnswer = aiAssistantManager.findAutoAnswer(sessionName, matchedText);
+    const autoAnswer = aiAssistantManager.checkAutoAnswerRules(matchedText);
     if (autoAnswer) {
       this.sendInput(sessionId, autoAnswer);
       sendToRenderer(IPC_CHANNELS.ALERT, { sessionId, type: AlertType.TASK_COMPLETE, message: `已自动回答: ${autoAnswer}` });

@@ -372,8 +372,7 @@ export class AIAssistantManager {
     }
   }
 
-  // 自动应答规则
-  private checkAutoAnswerRules(text: string): string | null {
+  checkAutoAnswerRules(text: string): string | null {
     for (const rule of this.autoAnswerRules) {
       if (!rule.enabled) continue;
       try {
