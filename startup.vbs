@@ -6,5 +6,6 @@ WshShell.CurrentDirectory = CreateObject("Scripting.FileSystemObject").GetParent
 WshShell.Environment("Process").Remove "ELECTRON_RUN_AS_NODE"
 
 ' 先构建，然后启动 Electron
-WshShell.Run "npm run build", 0, True
-WshShell.Run "npm run start", 1, False
+WshShell.Run "npm run build:electron", 0, True
+' 启动 Electron 应用（隐藏窗口）
+WshShell.Run "npm run start", 0, False
