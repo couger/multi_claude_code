@@ -5,7 +5,7 @@
   "main": "dist-electron/main.js",
   "type": "commonjs",
   "scripts": {
-    "dev": "vite",
+    "dev": "npm run build:electron && vite",
     "build": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json && vite build",
     "electron:dev": "vite",
