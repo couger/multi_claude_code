@@ -23,6 +23,14 @@ const IPC_CHANNELS = {
   SESSION_CLOSED: 'session:closed',
   ALERT: 'alert:trigger',
   TRAY_CREATE_SESSION: 'tray:create-session',
+
+  // AI 助手
+  AI_GET_CONFIG: 'ai:getConfig',
+  AI_UPDATE_CONFIG: 'ai:updateConfig',
+  AI_STATUS: 'ai:status',
+  AI_ALERT_ANALYZED: 'ai:alertAnalyzed',
+  AI_TEST_CONNECTION: 'ai:testConnection',
+  AI_QUERY: 'ai:query',
 };
 
 /**
@@ -148,6 +156,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setSelectedIPs: (ips: string[]) => ipcRenderer.invoke('remote:setSelectedIPs', ips),
   getSelectedIPs: () => ipcRenderer.invoke('remote:getSelectedIPs'),
   broadcastGeneralSettings: (settings: any) => ipcRenderer.send('settings:broadcastGeneral', settings),
+
+  // AI 助手
+  getAIConfig: () => ipcRenderer.invoke(IPC_CHANNELS.AI_GET_CONFIG),
+  updateAIConfig: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.AI_UPDATE_CONFIG, updates),
+  getAIStatus: () => ipcRenderer.invoke(IPC_CHANNELS.AI_STATUS),
+  testAIConnection: () => ipcRenderer.invoke(IPC_CHANNELS.AI_TEST_CONNECTION),
+  queryAI: (prompt: string, systemPrompt?: string) => ipcRenderer.invoke(IPC_CHANNELS.AI_QUERY, prompt, systemPrompt),
+  analyzeAlert: (sessionId: string, text: string) => ipcRenderer.invoke(IPC_CHANNELS.AI_ALERT_ANALYZED, sessionId, text),
+  onAIStatus: (callback: (data: any) => void) => {
+    registerListener(IPC_CHANNELS.AI_STATUS, callback);
+  },
+  onAIAlertAnalyzed: (callback: (data: any) => void) => {
+    registerListener(IPC_CHANNELS.AI_ALERT_ANALYZED, callback);
+  },
 });
 
 // 鼠标进入/离开窗口事件

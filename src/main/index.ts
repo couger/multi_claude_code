@@ -17,6 +17,7 @@ import { getLocalIPv4s } from './utils';
 import { createTray, updateTrayMenu, destroyTray, ensureWindowVisible, getDisplayAtCursor } from './TrayManager';
 import { HttpServerManager, checkPortInUse } from './HttpServer';
 import { diagnostics } from './Diagnostics';
+import { AIAssistantManager } from './AIAssistantManager';
 
 let mainWindow: BrowserWindow | null = null;
 let windowManager: WindowManager | null = null;
@@ -24,6 +25,7 @@ let processManager: ProcessManager | null = null;
 let performanceMonitor: PerformanceMonitor | null = null;
 let groupManager: GroupManager | null = null;
 let httpServerManager: HttpServerManager | null = null;
+let aiAssistantManager: AIAssistantManager | null = null;
 
 let minimizeToTrayOnClose = configManager.get('minimizeToTrayOnClose') ?? true;
 let hideToPrimary = false;
@@ -326,6 +328,29 @@ function initIPC() {
     if (!mainWindow || !windowManager?.isHidden()) return;
     windowManager.restore();
   });
+
+  // ---------- AI 助手 ----------
+
+  ipcMain.handle(IPC_CHANNELS.AI_GET_CONFIG, () => aiAssistantManager?.getConfig());
+  ipcMain.handle(IPC_CHANNELS.AI_UPDATE_CONFIG, (_, updates) => {
+    aiAssistantManager?.updateConfig(updates);
+    return aiAssistantManager?.getConfig();
+  });
+  ipcMain.handle(IPC_CHANNELS.AI_STATUS, () => aiAssistantManager?.getStatus());
+  ipcMain.handle(IPC_CHANNELS.AI_TEST_CONNECTION, async () => {
+    if (!aiAssistantManager) return { success: false, error: 'AI 助手未初始化' };
+    return await aiAssistantManager.testConnection();
+  });
+  ipcMain.handle(IPC_CHANNELS.AI_QUERY, async (_, prompt: string, systemPrompt?: string) => {
+    if (!aiAssistantManager) return '';
+    return await aiAssistantManager.query(prompt, systemPrompt);
+  });
+
+  // AI 分析告警
+  ipcMain.handle(IPC_CHANNELS.AI_ALERT_ANALYZED, async (_, sessionId: string, text: string) => {
+    if (!aiAssistantManager) return null;
+    return await aiAssistantManager.analyzeAlert(sessionId, text);
+  });
 }
 
 // ==================== 应用启动 ====================
@@ -358,6 +383,11 @@ app.whenReady().then(() => {
     httpServerManager?.broadcast(msg);
   });
 
+  // AI 助手管理器初始化
+  aiAssistantManager = new AIAssistantManager((msg) => {
+    httpServerManager?.broadcast(msg);
+  });
+
   createWindow();
   initIPC();
 
@@ -384,6 +414,7 @@ process.on('unhandledRejection', (reason) => {
 app.on('before-quit', () => {
   diagnostics.stopReporting();
   httpServerManager?.stop(true);
+  aiAssistantManager?.cleanup();
   if (processManager) {
     processManager.cleanup();
     processManager.killAllSessions();

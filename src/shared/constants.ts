@@ -138,6 +138,20 @@ export const IPC_CHANNELS = {
 
   // 托盘
   TRAY_CREATE_SESSION: 'tray:create-session',
+
+  // AI 助手
+  AI_GET_CONFIG: 'ai:getConfig',
+  AI_UPDATE_CONFIG: 'ai:updateConfig',
+  AI_STATUS: 'ai:status',
+  AI_ALERT_ANALYZED: 'ai:alertAnalyzed',
+  AI_TEST_CONNECTION: 'ai:testConnection',
+  AI_QUERY: 'ai:query',
+
+  // 语音交互（预留）
+  VOICE_START_LISTENING: 'voice:startListening',
+  VOICE_STOP_LISTENING: 'voice:stopListening',
+  VOICE_SPEAK: 'voice:speak',
+  VOICE_RESULT: 'voice:result',
 } as const;
 
 // ==================== 默认配置 ====================
