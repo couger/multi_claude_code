@@ -126,16 +126,34 @@ export function updateTrayMenu(
       enabled: false,
     },
     {
-      label: '一键贴边隐藏',
-      click: () => {
-        let targetDisplay: Electron.Display;
-        if (options.hideToPrimary) {
-          targetDisplay = screen.getPrimaryDisplay();
+      label: '贴边隐藏',
+      type: 'checkbox',
+      checked: windowManager.isHidden(),
+      click: (menuItem) => {
+        if (menuItem.checked) {
+          let targetDisplay: Electron.Display;
+          if (options.hideToPrimary) {
+            targetDisplay = screen.getPrimaryDisplay();
+          } else {
+            targetDisplay = getDisplayAtCursor();
+          }
+          windowManager.hideToEdge('right', targetDisplay);
         } else {
-          targetDisplay = getDisplayAtCursor();
+          // 取消勾选时，如果窗口隐藏则恢复
+          if (windowManager.isHidden()) {
+            ensureWindowVisible(mainWindow, windowManager);
+            windowManager.restore();
+          }
         }
-        windowManager.hideToEdge('right', targetDisplay);
         updateTrayMenu(mainWindow, windowManager, processManager, options);
+      },
+    },
+    {
+      label: 'AI 助手',
+      enabled: false, // 暂不实现，灰色显示
+      click: () => {
+        // TODO: 实现 AI 助手功能
+        console.log('AI 助手功能暂未实现');
       },
     },
     { type: 'separator' },

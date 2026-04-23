@@ -20,6 +20,7 @@ export interface WindowManagerState {
   hideDirection: HideDirection;
   currentHandleSize: number;
   isProgrammaticMove: boolean;
+  disableAutoHideOnRestore: boolean; // 恢复后禁用自动隐藏
 }
 
 /**
@@ -50,6 +51,7 @@ export class WindowManager {
     hideDirection: 'right',
     currentHandleSize: 10,
     isProgrammaticMove: false,
+    disableAutoHideOnRestore: false, // 恢复后禁用自动隐藏
   };
 
   // 配置
@@ -199,6 +201,7 @@ export class WindowManager {
     this.state.isWindowHidden = false;
     this.state.isWindowRestored = true;
     this.state.isManuallyHidden = false;
+    this.state.disableAutoHideOnRestore = true; // 标记为手动恢复，禁用自动隐藏
     this.mainWindow.setSkipTaskbar(false);
     this.mainWindow.setAlwaysOnTop(false);
     this.mainWindow.setResizable(true); // 恢复时启用调整大小
@@ -258,6 +261,7 @@ export class WindowManager {
     this.state.isWindowHidden = true;
     this.state.isWindowRestored = false;
     this.state.isManuallyHidden = true;
+    this.state.disableAutoHideOnRestore = false; // 重新隐藏后重置标志
     this.mainWindow.setResizable(false);
     this.mainWindow.setSkipTaskbar(true);
     this.mainWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -445,7 +449,9 @@ export class WindowManager {
                 isMouseStillNearEdge = newCursor.y <= newDisplay.bounds.y + edgeThreshold;
               }
 
-              if (!isMouseStillInWindow && !isMouseStillNearEdge && this.state.isWindowRestored) {
+              // 如果 disableAutoHideOnRestore 为 true，则不自动收起（用户手动恢复后禁用自动隐藏）
+              if (!this.state.disableAutoHideOnRestore
+                  && !isMouseStillInWindow && !isMouseStillNearEdge && this.state.isWindowRestored) {
                 this.autoHide();
               }
               this.autoHideDelayTimer = null;
@@ -497,10 +503,11 @@ export class WindowManager {
    * 重置隐藏状态（不执行恢复操作）
    */
   resetHiddenState(): void {
-    if (this.state.isWindowHidden) {
+    if (this.state.isWindowHidden || this.state.isWindowRestored) {
       this.state.isWindowHidden = false;
       this.state.isManuallyHidden = false;
       this.state.isWindowRestored = false;
+      this.state.disableAutoHideOnRestore = false; // 重置状态时也清空标志
       if (this.mainWindow) {
         this.mainWindow.setSkipTaskbar(false);
         this.mainWindow.setAlwaysOnTop(false);
