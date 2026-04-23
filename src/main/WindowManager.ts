@@ -3,6 +3,7 @@
  */
 
 import { BrowserWindow, screen } from 'electron';
+import { APP_CONSTANTS } from './constants';
 
 /**
  * 窗口隐藏方向
@@ -198,52 +199,28 @@ export class WindowManager {
     // 清除定时器
     this.clearTimers();
 
+    const display = screen.getDisplayNearestPoint(this.mainWindow.getBounds());
+
     this.state.isWindowHidden = false;
     this.state.isWindowRestored = true;
     this.state.isManuallyHidden = false;
     this.state.disableAutoHideOnRestore = true; // 标记为手动恢复，禁用自动隐藏
+
+    // 恢复到默认窗口大小
+    const defaultBounds = {
+      x: Math.round(display.bounds.x + (display.bounds.width - APP_CONSTANTS.DEFAULT_WINDOW_WIDTH) / 2),
+      y: Math.round(display.bounds.y + (display.bounds.height - APP_CONSTANTS.DEFAULT_WINDOW_HEIGHT) / 2),
+      width: APP_CONSTANTS.DEFAULT_WINDOW_WIDTH,
+      height: APP_CONSTANTS.DEFAULT_WINDOW_HEIGHT,
+    };
+
+    this.state.isProgrammaticMove = true;
+    this.mainWindow.setBounds(defaultBounds);
+    this.state.isProgrammaticMove = false;
+
     this.mainWindow.setSkipTaskbar(false);
     this.mainWindow.setAlwaysOnTop(false);
     this.mainWindow.setResizable(true); // 恢复时启用调整大小
-
-    // 恢复到滑出尺寸
-    const display = screen.getDisplayNearestPoint(this.mainWindow.getBounds());
-    const currentBounds = this.mainWindow.getBounds();
-    let restoreBounds;
-
-    if (this.state.hideDirection === 'right') {
-      restoreBounds = {
-        x: Math.round(display.bounds.x + display.bounds.width - this.config.restoreWidth - 4),
-        y: Math.round(currentBounds.y), // 保持当前 y 位置
-        width: Math.round(this.config.restoreWidth),
-        height: Math.round(currentBounds.height), // 保持当前高度
-      };
-    } else if (this.state.hideDirection === 'left') {
-      restoreBounds = {
-        x: Math.round(display.bounds.x + 4),
-        y: Math.round(currentBounds.y),
-        width: Math.round(this.config.restoreWidth),
-        height: Math.round(currentBounds.height),
-      };
-    } else if (this.state.hideDirection === 'bottom') {
-      restoreBounds = {
-        x: Math.round(currentBounds.x),
-        y: Math.round(display.bounds.y + display.bounds.height - this.config.restoreHeight - 4),
-        width: Math.round(currentBounds.width),
-        height: Math.round(this.config.restoreHeight),
-      };
-    } else if (this.state.hideDirection === 'top') {
-      restoreBounds = {
-        x: Math.round(currentBounds.x),
-        y: Math.round(display.bounds.y + 4),
-        width: Math.round(currentBounds.width),
-        height: Math.round(this.config.restoreHeight),
-      };
-    }
-
-    this.state.isProgrammaticMove = true;
-    this.mainWindow.setBounds(restoreBounds!);
-    this.state.isProgrammaticMove = false;
   }
 
   /**
