@@ -18,6 +18,7 @@ import { createTray, updateTrayMenu, destroyTray, ensureWindowVisible, getDispla
 import { HttpServerManager, checkPortInUse } from './HttpServer';
 import { diagnostics } from './Diagnostics';
 import { AIAssistantManager } from './AIAssistantManager';
+import { VoiceManager } from './VoiceManager';
 
 let mainWindow: BrowserWindow | null = null;
 let windowManager: WindowManager | null = null;
@@ -26,6 +27,7 @@ let performanceMonitor: PerformanceMonitor | null = null;
 let groupManager: GroupManager | null = null;
 let httpServerManager: HttpServerManager | null = null;
 let aiAssistantManager: AIAssistantManager | null = null;
+let voiceManager: VoiceManager | null = null;
 
 let minimizeToTrayOnClose = configManager.get('minimizeToTrayOnClose') ?? true;
 let hideToPrimary = false;
@@ -327,6 +329,22 @@ function initIPC() {
   ipcMain.on(IPC_CHANNELS.WINDOW_RESTORE, () => {
     if (!mainWindow || !windowManager?.isHidden()) return;
     windowManager.restore();
+  });
+
+  // ---------- 语音交互 ----------
+  ipcMain.on(IPC_CHANNELS.VOICE_START_LISTENING, async () => {
+    if (voiceManager) {
+      try { await voiceManager.startListening(); } catch (e) { console.error('[IPC] Voice start listening failed:', e); }
+    }
+  });
+  ipcMain.on(IPC_CHANNELS.VOICE_STOP_LISTENING, async () => {
+    if (voiceManager) {
+      try { await voiceManager.stopListening(); } catch (e) { console.error('[IPC] Voice stop listening failed:', e); }
+    }
+  });
+  ipcMain.handle(IPC_CHANNELS.VOICE_SPEAK, async (_: any, text: string) => {
+    if (!voiceManager) return '';
+    try { await voiceManager.speak(text); return ''; } catch (e) { console.error('[IPC] Voice speak failed:', e); return 'error'; }
   });
 
   // ---------- AI 助手 ----------

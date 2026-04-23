@@ -31,6 +31,12 @@ const IPC_CHANNELS = {
   AI_ALERT_ANALYZED: 'ai:alertAnalyzed',
   AI_TEST_CONNECTION: 'ai:testConnection',
   AI_QUERY: 'ai:query',
+
+  // 语音交互
+  VOICE_START_LISTENING: 'voice:startListening',
+  VOICE_STOP_LISTENING: 'voice:stopListening',
+  VOICE_SPEAK: 'voice:speak',
+  VOICE_RESULT: 'voice:result',
 };
 
 /**
@@ -169,6 +175,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onAIAlertAnalyzed: (callback: (data: any) => void) => {
     registerListener(IPC_CHANNELS.AI_ALERT_ANALYZED, callback);
+  },
+
+  // 语音交互
+  startListening: () => ipcRenderer.send(IPC_CHANNELS.VOICE_START_LISTENING),
+  stopListening: () => ipcRenderer.send(IPC_CHANNELS.VOICE_STOP_LISTENING),
+  speakText: (text: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SPEAK, text),
+  onVoiceResult: (callback: (data: { text: string }) => void) => {
+    registerListener(IPC_CHANNELS.VOICE_RESULT, callback);
   },
 });
 

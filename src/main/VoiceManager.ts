@@ -219,4 +219,5 @@ class VoiceManager {
   }
 }
 
+export { VoiceManager };
 export const voiceManager = new VoiceManager();
