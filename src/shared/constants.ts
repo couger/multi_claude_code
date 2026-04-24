@@ -146,12 +146,24 @@ export const IPC_CHANNELS = {
   AI_ALERT_ANALYZED: 'ai:alertAnalyzed',
   AI_TEST_CONNECTION: 'ai:testConnection',
   AI_QUERY: 'ai:query',
+  AI_GET_AUTO_ANSWER_RULES: 'ai:getAutoAnswerRules',
+  AI_ADD_AUTO_ANSWER_RULE: 'ai:addAutoAnswerRule',
+  AI_UPDATE_AUTO_ANSWER_RULE: 'ai:updateAutoAnswerRule',
+  AI_DELETE_AUTO_ANSWER_RULE: 'ai:deleteAutoAnswerRule',
 
   // 语音交互（预留）
   VOICE_START_LISTENING: 'voice:startListening',
   VOICE_STOP_LISTENING: 'voice:stopListening',
   VOICE_SPEAK: 'voice:speak',
   VOICE_RESULT: 'voice:result',
+
+  // 会话模板
+  TEMPLATE_LIST: 'template:list',
+  TEMPLATE_GET: 'template:get',
+  TEMPLATE_CREATE: 'template:create',
+  TEMPLATE_UPDATE: 'template:update',
+  TEMPLATE_DELETE: 'template:delete',
+  TEMPLATE_USE: 'template:use',
 } as const;
 
 // ==================== 默认配置 ====================

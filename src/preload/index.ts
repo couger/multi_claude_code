@@ -31,12 +31,24 @@ const IPC_CHANNELS = {
   AI_ALERT_ANALYZED: 'ai:alertAnalyzed',
   AI_TEST_CONNECTION: 'ai:testConnection',
   AI_QUERY: 'ai:query',
+  AI_GET_AUTO_ANSWER_RULES: 'ai:getAutoAnswerRules',
+  AI_ADD_AUTO_ANSWER_RULE: 'ai:addAutoAnswerRule',
+  AI_UPDATE_AUTO_ANSWER_RULE: 'ai:updateAutoAnswerRule',
+  AI_DELETE_AUTO_ANSWER_RULE: 'ai:deleteAutoAnswerRule',
 
   // 语音交互
   VOICE_START_LISTENING: 'voice:startListening',
   VOICE_STOP_LISTENING: 'voice:stopListening',
   VOICE_SPEAK: 'voice:speak',
   VOICE_RESULT: 'voice:result',
+
+  // 会话模板
+  TEMPLATE_LIST: 'template:list',
+  TEMPLATE_GET: 'template:get',
+  TEMPLATE_CREATE: 'template:create',
+  TEMPLATE_UPDATE: 'template:update',
+  TEMPLATE_DELETE: 'template:delete',
+  TEMPLATE_USE: 'template:use',
 };
 
 /**
@@ -170,6 +182,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testAIConnection: () => ipcRenderer.invoke(IPC_CHANNELS.AI_TEST_CONNECTION),
   queryAI: (prompt: string, systemPrompt?: string) => ipcRenderer.invoke(IPC_CHANNELS.AI_QUERY, prompt, systemPrompt),
   analyzeAlert: (sessionId: string, text: string) => ipcRenderer.invoke(IPC_CHANNELS.AI_ALERT_ANALYZED, sessionId, text),
+  
+  // 自动应答规则管理
+  getAutoAnswerRules: () => ipcRenderer.invoke(IPC_CHANNELS.AI_GET_AUTO_ANSWER_RULES),
+  addAutoAnswerRule: (rule: Omit<any, 'id'>) => ipcRenderer.invoke(IPC_CHANNELS.AI_ADD_AUTO_ANSWER_RULE, rule),
+  updateAutoAnswerRule: (ruleId: string, updates: Partial<any>) => ipcRenderer.invoke(IPC_CHANNELS.AI_UPDATE_AUTO_ANSWER_RULE, { ruleId, updates }),
+  deleteAutoAnswerRule: (ruleId: string) => ipcRenderer.invoke(IPC_CHANNELS.AI_DELETE_AUTO_ANSWER_RULE, ruleId),
+  
   onAIStatus: (callback: (data: any) => void) => {
     registerListener(IPC_CHANNELS.AI_STATUS, callback);
   },
@@ -193,6 +212,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onVoiceStopListening: (callback: () => void) => {
     registerListener(IPC_CHANNELS.VOICE_STOP_LISTENING, callback);
   },
+
+  // 会话模板
+  templateList: () => ipcRenderer.invoke(IPC_CHANNELS.TEMPLATE_LIST),
+  templateGet: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TEMPLATE_GET, id),
+  templateCreate: (options: { name: string; description?: string; workDir: string; args: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TEMPLATE_CREATE, options),
+  templateUpdate: (id: string, updates: any) => ipcRenderer.invoke(IPC_CHANNELS.TEMPLATE_UPDATE, { id, updates }),
+  templateDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TEMPLATE_DELETE, id),
+  templateUse: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TEMPLATE_USE, id),
 });
 
 // 鼠标进入/离开窗口事件

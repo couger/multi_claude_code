@@ -70,6 +70,22 @@ export interface ElectronAPI {
   getSelectedIPs: () => Promise<string[]>;
   broadcastGeneralSettings: (settings: any) => void;
 
+  // AI 助手
+  getAIConfig: () => Promise<any>;
+  updateAIConfig: (updates: any) => Promise<any>;
+  getAIStatus: () => Promise<any>;
+  testAIConnection: () => Promise<{ success: boolean; error?: string; response?: any }>;
+  queryAI: (prompt: string, systemPrompt?: string) => Promise<string>;
+  analyzeAlert: (sessionId: string, text: string) => Promise<any>;
+  onAIStatus: (callback: (data: any) => void) => void;
+  onAIAlertAnalyzed: (callback: (data: any) => void) => void;
+  
+  // 自动应答规则管理
+  getAutoAnswerRules: () => Promise<Array<{ id: string; pattern: string; answer: string; sessionPattern?: string; enabled: boolean }>>;
+  addAutoAnswerRule: (rule: Omit<{ id: string; pattern: string; answer: string; sessionPattern?: string; enabled: boolean }, 'id'>) => Promise<any>;
+  updateAutoAnswerRule: (ruleId: string, updates: Partial<{ pattern: string; answer: string; sessionPattern?: string; enabled: boolean }>) => Promise<any>;
+  deleteAutoAnswerRule: (ruleId: string) => Promise<any>;
+
   // 语音交互
   startListening: () => void;
   stopListening: () => void;
@@ -78,6 +94,14 @@ export interface ElectronAPI {
   onVoiceSpeak: (callback: (data: any) => void) => void;
   onVoiceStartListening: (callback: () => void) => void;
   onVoiceStopListening: (callback: () => void) => void;
+
+  // 会话模板
+  templateList: () => Promise<any[]>;
+  templateGet: (id: string) => Promise<any | null>;
+  templateCreate: (options: { name: string; description?: string; workDir: string; args: string }) => Promise<any>;
+  templateUpdate: (id: string, updates: any) => Promise<any | null>;
+  templateDelete: (id: string) => Promise<boolean>;
+  templateUse: (id: string) => Promise<any | null>;
 
   // 标记 Electron 环境
   isElectron?: boolean;

@@ -11,6 +11,7 @@ import type { GeneralSettings } from '../shared/types';
 import { ProcessManager } from './ProcessManager';
 import { PerformanceMonitor } from './PerformanceMonitor';
 import { GroupManager } from './GroupManager';
+import { TemplateManager } from './TemplateManager';
 import { WindowManager } from './WindowManager';
 import { configManager } from './ConfigManager';
 import { getLocalIPv4s } from './utils';
@@ -28,6 +29,7 @@ let groupManager: GroupManager | null = null;
 let httpServerManager: HttpServerManager | null = null;
 let aiAssistantManager: AIAssistantManager | null = null;
 let voiceManager: VoiceManager | null = null;
+let templateManager: TemplateManager | null = null;
 
 let minimizeToTrayOnClose = configManager.get('minimizeToTrayOnClose') ?? true;
 let hideToPrimary = false;
@@ -369,6 +371,32 @@ function initIPC() {
     if (!aiAssistantManager) return null;
     return await aiAssistantManager.analyzeAlert(sessionId, text);
   });
+
+  // 自动应答规则管理
+  ipcMain.handle(IPC_CHANNELS.AI_GET_AUTO_ANSWER_RULES, () => aiAssistantManager?.getAutoAnswerRules());
+  ipcMain.handle(IPC_CHANNELS.AI_ADD_AUTO_ANSWER_RULE, (_, rule) => {
+    if (!aiAssistantManager) return;
+    aiAssistantManager.addAutoAnswerRule(rule);
+    return aiAssistantManager.getAutoAnswerRules();
+  });
+  ipcMain.handle(IPC_CHANNELS.AI_UPDATE_AUTO_ANSWER_RULE, (_, { ruleId, updates }) => {
+    if (!aiAssistantManager) return;
+    aiAssistantManager.updateAutoAnswerRule(ruleId, updates);
+    return aiAssistantManager.getAutoAnswerRules();
+  });
+  ipcMain.handle(IPC_CHANNELS.AI_DELETE_AUTO_ANSWER_RULE, (_, ruleId) => {
+    if (!aiAssistantManager) return;
+    aiAssistantManager.deleteAutoAnswerRule(ruleId);
+    return aiAssistantManager.getAutoAnswerRules();
+  });
+
+  // 模板管理 IPC
+  ipcMain.handle(IPC_CHANNELS.TEMPLATE_LIST, () => templateManager?.getAll() || []);
+  ipcMain.handle(IPC_CHANNELS.TEMPLATE_GET, (_, id: string) => templateManager?.get(id));
+  ipcMain.handle(IPC_CHANNELS.TEMPLATE_CREATE, (_, options) => templateManager?.create(options));
+  ipcMain.handle(IPC_CHANNELS.TEMPLATE_UPDATE, (_, { id, updates }) => templateManager?.update(id, updates));
+  ipcMain.handle(IPC_CHANNELS.TEMPLATE_DELETE, (_, id: string) => templateManager?.delete(id) ?? false);
+  ipcMain.handle(IPC_CHANNELS.TEMPLATE_USE, (_, id: string) => templateManager?.incrementUseCount(id));
 }
 
 // ==================== 应用启动 ====================
@@ -396,6 +424,7 @@ app.whenReady().then(() => {
   processManager = new ProcessManager();
   performanceMonitor = new PerformanceMonitor(processManager);
   groupManager = new GroupManager();
+  templateManager = new TemplateManager();
   httpServerManager = new HttpServerManager(processManager, performanceMonitor, groupManager, (msg) => {
     // broadcastFn — 发送到 WebSocket 客户端
     httpServerManager?.broadcast(msg);

@@ -9,7 +9,7 @@ import { DisplayMode, AlertType, AlertNotifyMode, AlertSeverity } from '../../sh
 
 // ======================== 类型定义 ========================
 
-type TabKey = 'general' | 'groups' | 'performance' | 'remote' | 'alerts' | 'ai' | 'voice';
+type TabKey = 'general' | 'groups' | 'performance' | 'remote' | 'alerts' | 'ai' | 'voice' | 'templates';
 
 // AI配置接口（本地模型版本）
 interface AIConfig {
@@ -586,6 +586,90 @@ const AITab: React.FC = () => {
   const [testError, setTestError] = useState<string>('');
   const [testResponse, setTestResponse] = useState<string>('');
   const [showTestModal, setShowTestModal] = useState(false);
+  
+  // 自动应答规则状态
+  interface AutoAnswerRule {
+    id: string;
+    pattern: string;
+    answer: string;
+    sessionPattern?: string;
+    enabled: boolean;
+  }
+  const [autoAnswerRules, setAutoAnswerRules] = useState<AutoAnswerRule[]>([]);
+  const [showAddRuleModal, setShowAddRuleModal] = useState(false);
+  const [editingRule, setEditingRule] = useState<AutoAnswerRule | null>(null);
+  
+  // 新规则表单
+  const [newPattern, setNewPattern] = useState('');
+  const [newAnswer, setNewAnswer] = useState('');
+  const [newSessionPattern, setNewSessionPattern] = useState('');
+
+  // 加载自动应答规则
+  useEffect(() => {
+    loadAutoAnswerRules();
+  }, []);
+  
+  const loadAutoAnswerRules = async () => {
+    try {
+      if (window.electronAPI?.getAutoAnswerRules) {
+        const rules = await window.electronAPI.getAutoAnswerRules();
+        setAutoAnswerRules(rules || []);
+      }
+    } catch (e) {
+      console.error('加载自动应答规则失败:', e);
+    }
+  };
+  
+  const handleAddRule = async () => {
+    if (!newPattern || !newAnswer) {
+      alert('请填写匹配模式和回答内容');
+      return;
+    }
+    try {
+      if (window.electronAPI?.addAutoAnswerRule) {
+        await window.electronAPI.addAutoAnswerRule({
+          pattern: newPattern,
+          answer: newAnswer,
+          sessionPattern: newSessionPattern || undefined,
+          enabled: true,
+        });
+        setNewPattern('');
+        setNewAnswer('');
+        setNewSessionPattern('');
+        setShowAddRuleModal(false);
+        await loadAutoAnswerRules();
+      }
+    } catch (e) {
+      console.error('添加规则失败:', e);
+      alert('添加规则失败');
+    }
+  };
+  
+  const handleUpdateRule = async (ruleId: string, updates: Partial<AutoAnswerRule>) => {
+    try {
+      if (window.electronAPI?.updateAutoAnswerRule) {
+        await window.electronAPI.updateAutoAnswerRule(ruleId, updates);
+        setEditingRule(null);
+        await loadAutoAnswerRules();
+      }
+    } catch (e) {
+      console.error('更新规则失败:', e);
+      alert('更新规则失败');
+    }
+  };
+  
+  const handleDeleteRule = async (ruleId: string) => {
+    if (!confirm('确定删除此规则吗？')) return;
+    try {
+      if (window.electronAPI?.deleteAutoAnswerRule) {
+        await window.electronAPI.deleteAutoAnswerRule(ruleId);
+        await loadAutoAnswerRules();
+      }
+    } catch (e) {
+      console.error('删除规则失败:', e);
+      alert('删除规则失败');
+    }
+  };
 
   // 提示词相关状态（暂未实现）
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -966,6 +1050,144 @@ const AITab: React.FC = () => {
           <li>后续功能将支持AI自动处理会话异常</li>
         </ul>
       </div>
+
+      {/* 自动应答规则管理 */}
+      <div className="border-t border-dark-700 pt-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-dark-400 font-medium">自动应答规则</label>
+          <button
+            onClick={() => setShowAddRuleModal(true)}
+            className="text-xs px-3 py-1.5 bg-accent-primary/20 text-accent-primary rounded hover:bg-accent-primary/30 transition-colors"
+          >
+            + 添加规则
+          </button>
+        </div>
+        
+        {autoAnswerRules.length === 0 ? (
+          <div className="text-xs text-dark-500 text-center py-4 bg-dark-900 rounded">暂无自动应答规则</div>
+        ) : (
+          <div className="space-y-2 max-h-60 overflow-y-auto">
+            {autoAnswerRules.map((rule) => (
+              <div key={rule.id} className="border border-dark-600 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleUpdateRule(rule.id, { enabled: !rule.enabled })}
+                      className={`relative w-8 h-4 rounded-full transition-colors ${
+                        rule.enabled ? 'bg-accent-primary' : 'bg-dark-600'
+                      }`}
+                    >
+                      <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                        rule.enabled ? 'left-4' : 'left-0.5'
+                      }`} />
+                    </button>
+                    <span className="text-xs text-dark-200 font-medium">
+                      {rule.enabled ? '已启用' : '已禁用'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteRule(rule.id)}
+                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                  >
+                    删除
+                  </button>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-dark-500">匹配模式:</span>
+                    <code className="ml-1 px-1.5 py-0.5 bg-dark-900 rounded text-blue-300">{rule.pattern}</code>
+                  </div>
+                  <div>
+                    <span className="text-dark-500">自动回答:</span>
+                    <code className="ml-1 px-1.5 py-0.5 bg-dark-900 rounded text-green-300">{rule.answer}</code>
+                  </div>
+                </div>
+                
+                {rule.sessionPattern && (
+                  <div className="text-xs">
+                    <span className="text-dark-500">限定会话:</span>
+                    <span className="ml-1 text-yellow-300">{rule.sessionPattern}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        
+        <div className="text-xs text-dark-500 bg-dark-900/50 px-3 py-2 rounded">
+          <p>💡 提示：匹配模式使用正则表达式，支持大小写不敏感匹配。例如："创建目录|create.*directory"</p>
+        </div>
+      </div>
+
+      {/* 添加规则模态框 */}
+      {showAddRuleModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowAddRuleModal(false)}>
+          <div className="bg-dark-800 border border-dark-600 rounded-lg p-4 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-dark-100">添加自动应答规则</h3>
+              <button
+                onClick={() => setShowAddRuleModal(false)}
+                className="p-1 hover:bg-dark-700 rounded text-dark-400"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-dark-400 block mb-1">匹配模式（正则表达式）*</label>
+                <input
+                  type="text"
+                  value={newPattern}
+                  onChange={(e) => setNewPattern(e.target.value)}
+                  placeholder="例如：创建目录|create.*directory"
+                  className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none font-mono"
+                />
+              </div>
+              
+              <div>
+                <label className="text-xs text-dark-400 block mb-1">自动回答内容*</label>
+                <input
+                  type="text"
+                  value={newAnswer}
+                  onChange={(e) => setNewAnswer(e.target.value)}
+                  placeholder="例如：Y 或 n"
+                  className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none font-mono"
+                />
+              </div>
+              
+              <div>
+                <label className="text-xs text-dark-400 block mb-1">限定会话（可选）</label>
+                <input
+                  type="text"
+                  value={newSessionPattern}
+                  onChange={(e) => setNewSessionPattern(e.target.value)}
+                  placeholder="例如：*test* 或特定会话名"
+                  className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none font-mono"
+                />
+              </div>
+              
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={() => setShowAddRuleModal(false)}
+                  className="flex-1 py-2 bg-dark-700 text-dark-300 rounded text-sm hover:bg-dark-600 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleAddRule}
+                  className="flex-1 py-2 bg-accent-primary text-dark-900 rounded text-sm font-medium hover:bg-accent-primary/80 transition-colors"
+                >
+                  添加规则
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1997,6 +2219,251 @@ const VoiceTab: React.FC = () => {
   );
 };
 
+// ======================== 子组件：模板设置 ========================
+
+interface TemplateItem {
+  id: string;
+  name: string;
+  description?: string;
+  workDir: string;
+  args: string;
+  createdAt: string;
+  updatedAt: string;
+  useCount: number;
+}
+
+const TemplatesTab: React.FC = () => {
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState({ name: '', description: '', workDir: '', args: '' });
+
+  // 加载模板列表
+  const loadTemplates = useCallback(async () => {
+    if (!window.electronAPI?.templateList) return;
+    try {
+      const list = await window.electronAPI.templateList();
+      setTemplates(list || []);
+    } catch (e) {
+      console.error('加载模板失败:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTemplates();
+  }, [loadTemplates]);
+
+  // 选择工作目录
+  const handleSelectDir = async () => {
+    if (!window.electronAPI?.selectWorkDir) return;
+    const dir = await window.electronAPI.selectWorkDir();
+    if (dir) {
+      setFormData(prev => ({ ...prev, workDir: dir }));
+    }
+  };
+
+  // 保存模板
+  const handleSave = async () => {
+    if (!formData.name || !formData.workDir) return;
+    if (!window.electronAPI?.templateCreate || !window.electronAPI?.templateUpdate) return;
+
+    try {
+      if (editingId) {
+        await window.electronAPI.templateUpdate(editingId, formData);
+      } else {
+        await window.electronAPI.templateCreate(formData);
+      }
+      setFormData({ name: '', description: '', workDir: '', args: '' });
+      setShowForm(false);
+      setEditingId(null);
+      loadTemplates();
+    } catch (e) {
+      console.error('保存模板失败:', e);
+    }
+  };
+
+  // 编辑模板
+  const handleEdit = (template: TemplateItem) => {
+    setFormData({
+      name: template.name,
+      description: template.description || '',
+      workDir: template.workDir,
+      args: template.args,
+    });
+    setEditingId(template.id);
+    setShowForm(true);
+  };
+
+  // 删除模板
+  const handleDelete = async (id: string) => {
+    if (!window.electronAPI?.templateDelete) return;
+    if (!confirm('确定要删除这个模板吗？')) return;
+    try {
+      await window.electronAPI.templateDelete(id);
+      loadTemplates();
+    } catch (e) {
+      console.error('删除模板失败:', e);
+    }
+  };
+
+  // 使用模板（记录使用次数）
+  const handleUse = async (id: string) => {
+    if (!window.electronAPI?.templateUse) return;
+    try {
+      await window.electronAPI.templateUse(id);
+    } catch (e) {
+      console.error('使用模板失败:', e);
+    }
+  };
+
+  if (loading) {
+    return <div className="p-4 text-dark-400 text-sm">加载中...</div>;
+  }
+
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      {/* 标题和添加按钮 */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-dark-100">会话模板</h3>
+        <button
+          onClick={() => {
+            setFormData({ name: '', description: '', workDir: '', args: '' });
+            setEditingId(null);
+            setShowForm(true);
+          }}
+          className="px-3 py-1.5 bg-accent-primary text-dark-900 rounded text-xs font-medium hover:bg-accent-primary/80 transition-colors"
+        >
+          + 添加模板
+        </button>
+      </div>
+
+      {/* 添加/编辑表单 */}
+      {showForm && (
+        <div className="p-3 bg-dark-900 rounded border border-dark-600 space-y-3">
+          <input
+            type="text"
+            value={formData.name}
+            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+            placeholder="模板名称 *"
+            className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+          />
+          <input
+            type="text"
+            value={formData.description}
+            onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+            placeholder="描述（可选）"
+            className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+          />
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={formData.workDir}
+              onChange={(e) => setFormData(prev => ({ ...prev, workDir: e.target.value }))}
+              placeholder="工作目录 *"
+              className="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none font-mono"
+            />
+            <button
+              onClick={handleSelectDir}
+              className="px-3 py-2 bg-dark-700 text-dark-300 rounded text-xs hover:bg-dark-600"
+            >
+              浏览
+            </button>
+          </div>
+          <input
+            type="text"
+            value={formData.args}
+            onChange={(e) => setFormData(prev => ({ ...prev, args: e.target.value }))}
+            placeholder="启动参数（可选）"
+            className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none font-mono"
+          />
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={() => { setShowForm(false); setEditingId(null); }}
+              className="px-3 py-1.5 bg-dark-700 text-dark-300 rounded text-xs hover:bg-dark-600"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!formData.name || !formData.workDir}
+              className="px-3 py-1.5 bg-accent-primary text-dark-900 rounded text-xs font-medium hover:bg-accent-primary/80 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {editingId ? '保存修改' : '创建模板'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ���板列表 */}
+      {templates.length === 0 ? (
+        <div className="text-center py-8 text-dark-500 text-sm">
+          暂无模板，点击"添加模板"创建第一个模板
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {templates.map((template) => (
+            <div
+              key={template.id}
+              className="p-3 bg-dark-900 rounded border border-dark-600 hover:border-dark-500 transition-colors"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-dark-100">{template.name}</span>
+                    {template.useCount > 0 && (
+                      <span className="text-xs text-dark-500">已使用 {template.useCount} 次</span>
+                    )}
+                  </div>
+                  {template.description && (
+                    <div className="text-xs text-dark-400 mt-0.5">{template.description}</div>
+                  )}
+                  <div className="text-xs text-dark-500 font-mono mt-1 truncate" title={template.workDir}>
+                    {template.workDir}
+                  </div>
+                  {template.args && (
+                    <div className="text-xs text-dark-500 font-mono mt-0.5 truncate" title={template.args}>
+                      {template.args}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <button
+                    onClick={() => handleUse(template.id)}
+                    className="px-2 py-1 text-xs bg-blue-600/20 text-blue-400 rounded hover:bg-blue-600/30"
+                    title="使用此模板创建会话"
+                  >
+                    使用
+                  </button>
+                  <button
+                    onClick={() => handleEdit(template)}
+                    className="px-2 py-1 text-xs bg-dark-700 text-dark-300 rounded hover:bg-dark-600"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    onClick={() => handleDelete(template.id)}
+                    className="px-2 py-1 text-xs bg-red-600/20 text-red-400 rounded hover:bg-red-600/30"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 提示 */}
+      <div className="text-xs text-dark-500 bg-dark-900/50 px-3 py-2 rounded">
+        <p>提示：模板可以保存常用的工作目录和启动参数，方便快速创建会话。</p>
+      </div>
+    </div>
+  );
+};
+
 // ======================== 主组件：SettingsPanel ========================
 
 const TABS: { key: TabKey; label: string; icon: string }[] = [
@@ -2034,6 +2501,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     tabs.push({ key: 'ai' as TabKey, label: '助手AI', icon: '🤖' });
     // 添加语音标签页（始终显示）
     tabs.push({ key: 'voice' as TabKey, label: '语音', icon: '🎤' });
+    // 添加模板标签页
+    tabs.push({ key: 'templates' as TabKey, label: '模板', icon: '📋' });
     return tabs;
   }, []);
 
@@ -2103,6 +2572,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           )}
           {activeTab === 'voice' && (
             <VoiceTab />
+          )}
+          {activeTab === 'templates' && (
+            <TemplatesTab />
           )}
         </div>
       </div>
