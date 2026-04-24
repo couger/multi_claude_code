@@ -74,6 +74,10 @@ export interface ElectronAPI {
   startListening: () => void;
   stopListening: () => void;
   speakText: (text: string) => Promise<string>;
+  onVoiceResult: (callback: (data: { text: string }) => void) => void;
+  onVoiceSpeak: (callback: (data: any) => void) => void;
+  onVoiceStartListening: (callback: () => void) => void;
+  onVoiceStopListening: (callback: () => void) => void;
 
   // 标记 Electron 环境
   isElectron?: boolean;

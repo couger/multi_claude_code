@@ -9,7 +9,7 @@ import { DisplayMode, AlertType, AlertNotifyMode, AlertSeverity } from '../../sh
 
 // ======================== 类型定义 ========================
 
-type TabKey = 'general' | 'groups' | 'performance' | 'remote' | 'alerts' | 'ai';
+type TabKey = 'general' | 'groups' | 'performance' | 'remote' | 'alerts' | 'ai' | 'voice';
 
 // AI配置接口（本地模型版本）
 interface AIConfig {
@@ -1796,6 +1796,207 @@ const _RemoteTab: React.FC<{ visible: boolean; settings?: GeneralSettings; onSet
   );
 };
 
+// ======================== 子组件：语音设置 ========================
+
+const VoiceTab: React.FC = () => {
+  const [config, setConfig] = useState<VoiceConfig>(() => {
+    const saved = localStorage.getItem('voiceConfig');
+    return saved ? JSON.parse(saved) : {
+      ttsEngine: 'web-speech' as const,
+      speechRate: 1.0,
+      speechVolume: 1.0,
+      enabled: true,
+    };
+  });
+  const [isListening, setIsListening] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [testText, setTestText] = useState('你好，我是你的语音助手。');
+  const [testing, setTesting] = useState<'none' | 'listen' | 'speak'>('none');
+
+  // 保存配置
+  useEffect(() => {
+    localStorage.setItem('voiceConfig', JSON.stringify(config));
+  }, [config]);
+
+  // 处理录音测试
+  const handleListenTest = async () => {
+    if (testing === 'listen') {
+      setTesting('none');
+      setIsListening(false);
+      window.electronAPI?.stopListening?.();
+      return;
+    }
+
+    try {
+      setTesting('listen');
+      setIsListening(true);
+      await window.electronAPI?.startListening?.();
+
+      // 监听语音识别结果
+      const handleResult = (data: { text: string }) => {
+        if (data.text) {
+          alert(`语音识别结果: ${data.text}`);
+          window.electronAPI?.stopListening?.();
+          setIsListening(false);
+          setTesting('none');
+          window.electronAPI?.removeListener?.('voice:result', handleResult);
+        }
+      };
+      window.electronAPI?.onVoiceResult?.(handleResult);
+    } catch (e) {
+      console.error('语音识别测试失败:', e);
+      setTesting('none');
+      setIsListening(false);
+      alert('录音测试失败，请检查麦克风是否连接');
+    }
+  };
+
+  // 处理 TTS 播放测试
+  const handleSpeakTest = async () => {
+    if (!testText.trim()) return;
+
+    try {
+      setTesting('speak');
+      await window.electronAPI?.speakText?.(testText);
+      setTimeout(() => setTesting('none'), 500);
+    } catch (e) {
+      console.error('TTS播放测试失败:', e);
+      alert('语音播放测试失败');
+      setTesting('none');
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* 启用开关 */}
+      <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
+        <div>
+          <div className="text-sm text-dark-200 font-medium">启用语音交互</div>
+          <div className="text-xs text-dark-500">允许录音和语音播报</div>
+        </div>
+        <button
+          onClick={() => setConfig({ ...config, enabled: !config.enabled })}
+          className={`relative w-10 h-5 rounded-full transition-colors ${
+            config.enabled ? 'bg-accent-primary' : 'bg-dark-600'
+          }`}
+        >
+          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+            config.enabled ? 'left-5' : 'left-0.5'
+          }`} />
+        </button>
+      </div>
+
+      {/* TTS 引擎选择 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">语音合成引擎</label>
+        <div className="flex gap-2">
+          {(['edge-tts', 'piper', 'web-speech'] as const).map(engine => (
+            <button
+              key={engine}
+              onClick={() => setConfig({ ...config, ttsEngine: engine })}
+              className={`flex-1 text-xs py-2 rounded transition-colors ${
+                config.ttsEngine === engine
+                  ? 'bg-accent-primary text-dark-900'
+                  : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
+              }`}
+            >
+              {engine === 'edge-tts' ? 'Edge TTS' : engine === 'piper' ? 'Piper' : 'Web Speech'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 语速调节 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">语速: {config.speechRate.toFixed(1)}x</label>
+        <input
+          type="range"
+          min="0.5"
+          max="2"
+          step="0.1"
+          value={config.speechRate}
+          onChange={(e) => setConfig({ ...config, speechRate: parseFloat(e.target.value) })}
+          className="w-full accent-accent-primary"
+        />
+      </div>
+
+      {/* 音量调节 */}
+      <div className="space-y-2">
+        <label className="text-xs text-dark-400">音量: {Math.round(config.speechVolume * 100)}%</label>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.1"
+          value={config.speechVolume}
+          onChange={(e) => setConfig({ ...config, speechVolume: parseFloat(e.target.value) })}
+          className="w-full accent-accent-primary"
+        />
+      </div>
+
+      {/* 测试区域 */}
+      <div className="border-t border-dark-700 pt-4 space-y-3">
+        <label className="text-xs text-dark-400 font-medium">语音测试</label>
+
+        {/* 录音测试 */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleListenTest}
+            disabled={!config.enabled || testing === 'speak'}
+            className={`flex-1 py-2 rounded text-xs transition-colors flex items-center justify-center gap-2 ${
+              isListening
+                ? 'bg-red-600/20 text-red-400'
+                : config.enabled && testing !== 'speak'
+                  ? 'bg-green-600/20 text-green-400 hover:bg-green-600/30'
+                  : 'bg-dark-900 text-dark-500 cursor-not-allowed'
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-4a6 6 0 01-3.162-5.288m6.162 2.288l5.272 5.272m-5.272-5.272A6 6 0 0112 5z" />
+            </svg>
+            {isListening ? '停止录音' : testing === 'listen' ? '录音中...' : '测试录音'}
+          </button>
+          <span className="text-xs text-dark-400">
+            {isListening ? (
+              <span className="flex items-center gap-1"><span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />录音中</span>
+            ) : '点击开始语音输入'}
+          </span>
+        </div>
+
+        {/* TTS播放测试 */}
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={testText}
+            onChange={(e) => setTestText(e.target.value)}
+            disabled={!config.enabled || testing === 'listen'}
+            placeholder="输入要播放的文本..."
+            className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none disabled:opacity-50"
+          />
+          <button
+            onClick={handleSpeakTest}
+            disabled={!config.enabled || testing === 'listen'}
+            className={`w-full py-2 rounded text-xs transition-colors ${
+              speaking
+                ? 'bg-blue-600/20 text-blue-400'
+                : config.enabled && testing !== 'listen'
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                  : 'bg-dark-900 text-dark-500 cursor-not-allowed'
+            }`}
+          >
+            {speaking ? '播放中...' : testing === 'speak' ? '测试中...' : '测试语音播报'}
+          </button>
+        </div>
+      </div>
+
+      {/* 提示 */}
+      <div className="text-xs text-dark-500 bg-dark-900/50 px-3 py-2 rounded">
+        <p>提示：录音功能需要点击麦克风按钮开始，语音播报会在标题栏显示蓝色闪烁提示。</p>
+      </div>
+    </div>
+  );
+};
+
 // ======================== 主组件：SettingsPanel ========================
 
 const TABS: { key: TabKey; label: string; icon: string }[] = [
@@ -1831,6 +2032,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     tabs.push({ key: 'alerts' as TabKey, label: '告警', icon: '🔔' });
     // 添加 AI 标签页（始终显示）
     tabs.push({ key: 'ai' as TabKey, label: '助手AI', icon: '🤖' });
+    // 添加语音标签页（始终显示）
+    tabs.push({ key: 'voice' as TabKey, label: '语音', icon: '🎤' });
     return tabs;
   }, []);
 
@@ -1897,6 +2100,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           )}
           {activeTab === 'ai' && (
             <AITab />
+          )}
+          {activeTab === 'voice' && (
+            <VoiceTab />
           )}
         </div>
       </div>

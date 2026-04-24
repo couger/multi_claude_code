@@ -184,6 +184,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onVoiceResult: (callback: (data: { text: string }) => void) => {
     registerListener(IPC_CHANNELS.VOICE_RESULT, callback);
   },
+  onVoiceSpeak: (callback: (data: any) => void) => {
+    registerListener(IPC_CHANNELS.VOICE_SPEAK, callback);
+  },
+  onVoiceStartListening: (callback: () => void) => {
+    registerListener(IPC_CHANNELS.VOICE_START_LISTENING, callback);
+  },
+  onVoiceStopListening: (callback: () => void) => {
+    registerListener(IPC_CHANNELS.VOICE_STOP_LISTENING, callback);
+  },
 });
 
 // 鼠标进入/离开窗口事件
