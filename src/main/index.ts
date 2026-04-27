@@ -44,9 +44,14 @@ export function sendToRenderer(channel: string, data: unknown) {
   httpServerManager?.broadcast({ channel, data });
 }
 
+export { app };
+
 // ==================== 窗口创建 ====================
 
 function createWindow() {
+  // 获取半透明设置
+  const savedOpacity = (configManager.get('windowOpacity') as number) ?? 1.0;
+
   mainWindow = new BrowserWindow({
     width: APP_CONSTANTS.DEFAULT_WINDOW_WIDTH,
     height: APP_CONSTANTS.DEFAULT_WINDOW_HEIGHT,
@@ -61,6 +66,22 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+
+  // 注入 COOP/COEP 头以启用 SharedArrayBuffer（WASM STT 需要）
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Cross-Origin-Opener-Policy': ['same-origin'],
+        'Cross-Origin-Embedder-Policy': ['require-corp'],
+      },
+    });
+  });
+
+  // 保存窗口透明度设置（CSS 方案，不需要改变窗口本身透明度）
+  if (savedOpacity < 1.0) {
+    configManager.set('windowOpacity', savedOpacity);
+  }
 
   windowManager = new WindowManager(mainWindow, {
     restoreWidth: APP_CONSTANTS.RESTORE_WIDTH,
@@ -160,6 +181,19 @@ function initIPC() {
   ipcMain.handle(IPC_CHANNELS.SELECT_WORKDIR, async () => {
     const defaultPath = configManager.get('defaultBrowseDir') || app.getPath('home');
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], defaultPath });
+    return result.filePaths[0] || null;
+  });
+
+  // 选择 Whisper 可执行文件路径
+  ipcMain.handle(IPC_CHANNELS.SELECT_WHISPER_PATH, async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openFile'],
+      filters: [
+        { name: 'Executable', extensions: ['exe'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
+      title: '选择 Whisper 可执行文件',
+    });
     return result.filePaths[0] || null;
   });
 
@@ -333,6 +367,23 @@ function initIPC() {
     windowManager.restore();
   });
 
+  // 窗口透明度控制（CSS 方案，不透明窗口但背景半透明）
+  ipcMain.handle(IPC_CHANNELS.WINDOW_SET_OPACITY, async (_, opacity: number) => {
+    try {
+      // 保存设置
+      configManager.set('windowOpacity', opacity);
+      // 广播给渲染进程
+      mainWindow?.webContents.send(IPC_CHANNELS.WINDOW_OPACITY_CHANGED, opacity);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, message: e.message };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.WINDOW_GET_OPACITY, async () => {
+    return (configManager.get('windowOpacity') as number) ?? 1.0;
+  });
+
   // ---------- 语音交互 ----------
   ipcMain.on(IPC_CHANNELS.VOICE_START_LISTENING, async () => {
     if (voiceManager) {
@@ -347,6 +398,60 @@ function initIPC() {
   ipcMain.handle(IPC_CHANNELS.VOICE_SPEAK, async (_: any, text: string) => {
     if (!voiceManager) return '';
     try { await voiceManager.speak(text); return ''; } catch (e) { console.error('[IPC] Voice speak failed:', e); return 'error'; }
+  });
+  // 获取语音配置
+  ipcMain.handle(IPC_CHANNELS.VOICE_GET_CONFIG, async () => {
+    if (!voiceManager) return { enabled: false };
+    return voiceManager.getConfig();
+  });
+  // 音频识别请求
+  ipcMain.handle(IPC_CHANNELS.VOICE_RECOGNIZE, async (_: any, audioBuffer: Buffer) => {
+    console.log('[IPC] VOICE_RECOGNIZE 收到请求, 大小:', audioBuffer ? audioBuffer.length : 0);
+    if (!voiceManager) {
+      console.log('[IPC] voiceManager 不存在');
+      return 'ERROR:voiceManager不存在';
+    }
+    try {
+      const result = await voiceManager.recognizeAudio(audioBuffer);
+      console.log('[IPC] 识别结果:', result);
+      // 发送识别结果到渲染进程
+      sendToRenderer(IPC_CHANNELS.VOICE_RESULT, { text: result });
+      // 同时触发语音命令解析
+      if (result) {
+        voiceManager.handleVoiceResult(result);
+      }
+      return result;
+    } catch (e) {
+      console.error('[IPC] Voice recognize failed:', e);
+      return '';
+    }
+  });
+  // 接收前端发送的音频数据（流式）
+  let audioChunks: Buffer[] = [];
+  ipcMain.on(IPC_CHANNELS.VOICE_AUDIO_DATA, async (_: any, chunk: Buffer) => {
+    audioChunks.push(chunk);
+  });
+  // 当停止录音时，处理累积的音频
+  ipcMain.on(IPC_CHANNELS.VOICE_STOP_LISTENING, async () => {
+    if (audioChunks.length > 0 && voiceManager) {
+      const fullAudio = Buffer.concat(audioChunks);
+      audioChunks = [];
+      try {
+        const result = await voiceManager.recognizeAudio(fullAudio);
+        if (result) {
+          sendToRenderer(IPC_CHANNELS.VOICE_RESULT, { text: result });
+          voiceManager.handleVoiceResult(result);
+        }
+      } catch (e) {
+        console.error('[IPC] Audio recognition failed:', e);
+      }
+    }
+  });
+
+  // 接收渲染进程 WASM STT 的识别结果，触发命令解析
+  ipcMain.on(IPC_CHANNELS.VOICE_RESULT, (_event: any, data: { text: string }) => {
+    if (!voiceManager || !data?.text) return;
+    voiceManager.handleVoiceResult(data.text);
   });
 
   // ---------- AI 助手 ----------
@@ -397,6 +502,89 @@ function initIPC() {
   ipcMain.handle(IPC_CHANNELS.TEMPLATE_UPDATE, (_, { id, updates }) => templateManager?.update(id, updates));
   ipcMain.handle(IPC_CHANNELS.TEMPLATE_DELETE, (_, id: string) => templateManager?.delete(id) ?? false);
   ipcMain.handle(IPC_CHANNELS.TEMPLATE_USE, (_, id: string) => templateManager?.incrementUseCount(id));
+
+  // 语音命令执行
+  ipcMain.handle(IPC_CHANNELS.VOICE_EXECUTE_COMMAND, async (_, command: any) => {
+    if (!processManager) return { success: false, message: 'ProcessManager not initialized' };
+
+    try {
+      switch (command.type) {
+        case 'session': {
+          const action = command.action;
+          if (action === 'create') {
+            // 创建新会话
+            const session = await processManager.createSession(command.payload || {});
+            return { success: true, sessionId: session?.id, message: '会话已创建' };
+          } else if (action === 'close' || action === 'kill') {
+            // 关闭会话
+            const sessionId = command.target;
+            if (sessionId) {
+              await processManager.killSession(sessionId);
+              return { success: true, message: '会话已关闭' };
+            }
+            return { success: false, message: '未指定会话ID' };
+          } else if (action === 'send') {
+            // 发送输入
+            const { sessionId, input } = command.payload || {};
+            if (sessionId && input) {
+              await processManager.sendInput(sessionId, input);
+              return { success: true, message: '已发送输入' };
+            }
+            return { success: false, message: '未指定会话ID或输入' };
+          }
+          return { success: false, message: '未知会话操作' };
+        }
+        case 'answer': {
+          // 回答命令 - 发送给当前活动的会话
+          const sessions = processManager.getSessions();
+          const activeSession = sessions.find((s: any) => s.status === 'RUNNING');
+          if (activeSession) {
+            await processManager.sendInput(activeSession.id, command.content + '\n');
+            return { success: true, message: '已发送回答' };
+          }
+          return { success: false, message: '没有运行中的会话' };
+        }
+        case 'control': {
+          // 控制命令 - 语音配置已在 VoiceManager 中处理
+          return { success: true, message: command.content };
+        }
+        case 'query': {
+          // 查询命令 - 返回状态信息
+          const sessions = processManager.getSessions();
+          const running = sessions.filter((s: any) => s.status === 'RUNNING').length;
+          return {
+            success: true,
+            message: `当前共有 ${sessions.length} 个会话，其中 ${running} 个运行中`,
+            data: { total: sessions.length, running }
+          };
+        }
+        case 'ai_query': {
+          // AI 查询命令 - 发送到 AI 模型
+          if (!aiAssistantManager) {
+            return { success: false, message: 'AI 助手未初始化' };
+          }
+          const aiConfig = aiAssistantManager.getConfig();
+          if (!aiConfig.enabled) {
+            return { success: false, message: 'AI 助手未启用，请在设置中开启' };
+          }
+          const aiStatus = aiAssistantManager.getStatus();
+          if (!aiStatus.healthy) {
+            return { success: false, message: 'AI 助手连接不可用' };
+          }
+          try {
+            const aiResponse = await aiAssistantManager.query(command.content);
+            return { success: true, message: aiResponse || 'AI 无回复' };
+          } catch (e: any) {
+            return { success: false, message: 'AI 查询失败: ' + e.message };
+          }
+        }
+        default:
+          return { success: false, message: '未知命令类型' };
+      }
+    } catch (e: any) {
+      return { success: false, message: e.message };
+    }
+  });
 }
 
 // ==================== 应用启动 ====================
@@ -434,6 +622,10 @@ app.whenReady().then(() => {
   aiAssistantManager = new AIAssistantManager((msg) => {
     httpServerManager?.broadcast(msg);
   });
+
+  // 语音管理器初始化
+  voiceManager = new VoiceManager();
+  console.log('[Init] VoiceManager 已初始化');
 
   createWindow();
   initIPC();

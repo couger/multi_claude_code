@@ -16,7 +16,9 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
   },
   "dependencies": {
+    "@timur00kh/whisper.wasm": "^0.1.0-canary.52de4c5",
     "@types/ws": "^8.18.1",
+    "edge-tts": "^1.0.1",
     "electron": "^28.3.3",
     "node-pty": "^1.0.0",
     "react": "^18.2.0",

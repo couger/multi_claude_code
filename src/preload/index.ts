@@ -12,6 +12,7 @@ const IPC_CHANNELS = {
   GET_SESSION_OUTPUT: 'session:output',
   SEND_INPUT: 'session:input',
   SELECT_WORKDIR: 'dialog:selectWorkdir',
+  SELECT_WHISPER_PATH: 'dialog:selectWhisperPath',
   SET_NOTE: 'session:note',
   RESIZE_SESSION: 'session:resize',
   WINDOW_MAXIMIZE: 'window:maximizeForSession',
@@ -41,6 +42,11 @@ const IPC_CHANNELS = {
   VOICE_STOP_LISTENING: 'voice:stopListening',
   VOICE_SPEAK: 'voice:speak',
   VOICE_RESULT: 'voice:result',
+  VOICE_COMMAND: 'voice:command',
+  VOICE_EXECUTE_COMMAND: 'voice:executeCommand',
+  VOICE_AUDIO_DATA: 'voice:audioData',
+  VOICE_RECOGNIZE: 'voice:recognize',
+  VOICE_GET_CONFIG: 'voice:getConfig',
 
   // 会话模板
   TEMPLATE_LIST: 'template:list',
@@ -102,6 +108,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 对话框
   selectWorkDir: () => ipcRenderer.invoke(IPC_CHANNELS.SELECT_WORKDIR),
+  selectWhisperPath: () => ipcRenderer.invoke(IPC_CHANNELS.SELECT_WHISPER_PATH),
 
   // 窗口控制
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
@@ -112,6 +119,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleAutoHideWindow: () => ipcRenderer.send('window:toggle-auto-hide'),
   hideWindowToEdge: () => ipcRenderer.send('window:hide-to-edge'),
   restoreWindow: () => ipcRenderer.send('window:restore-window'),
+  setWindowOpacity: (opacity: number) => ipcRenderer.invoke('window:setOpacity', opacity),
+  getWindowOpacity: () => ipcRenderer.invoke('window:getOpacity'),
+  onWindowOpacityChanged: (callback: (opacity: number) => void) => {
+    registerListener('window:opacityChanged', callback);
+  },
 
   // 事件监听 — 支持多回调，不会互相覆盖
   onSessionCreated: (callback: (data: any) => void) => {
@@ -199,7 +211,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 语音交互
   startListening: () => ipcRenderer.send(IPC_CHANNELS.VOICE_START_LISTENING),
   stopListening: () => ipcRenderer.send(IPC_CHANNELS.VOICE_STOP_LISTENING),
+  sendVoiceResult: (text: string) => ipcRenderer.send(IPC_CHANNELS.VOICE_RESULT, { text }),
   speakText: (text: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SPEAK, text),
+  getVoiceConfig: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GET_CONFIG),
   onVoiceResult: (callback: (data: { text: string }) => void) => {
     registerListener(IPC_CHANNELS.VOICE_RESULT, callback);
   },
@@ -212,6 +226,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onVoiceStopListening: (callback: () => void) => {
     registerListener(IPC_CHANNELS.VOICE_STOP_LISTENING, callback);
   },
+  onVoiceCommand: (callback: (data: any) => void) => {
+    registerListener(IPC_CHANNELS.VOICE_COMMAND, callback);
+  },
+  executeVoiceCommand: (command: any) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_EXECUTE_COMMAND, command),
+  // 发送音频数据到主进程进行识别
+  sendAudioData: (audioData: ArrayBuffer) => ipcRenderer.send(IPC_CHANNELS.VOICE_AUDIO_DATA, Buffer.from(audioData)),
+  // 请求语音识别（返回识别结果）
+  recognizeAudio: (audioData: ArrayBuffer) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_RECOGNIZE, Buffer.from(audioData)),
 
   // 会话模板
   templateList: () => ipcRenderer.invoke(IPC_CHANNELS.TEMPLATE_LIST),

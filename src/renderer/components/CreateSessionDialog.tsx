@@ -11,6 +11,14 @@ const PRESET_ARGS = [
   { flag: '--verbose', label: '详细输出模式', desc: 'verbose' },
 ] as const;
 
+interface TemplateItem {
+  id: string;
+  name: string;
+  workDir: string;
+  args: string;
+  useCount: number;
+}
+
 interface CreateSessionDialogProps {
   visible: boolean;
   onClose: () => void;
@@ -32,8 +40,40 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
   const [lastArgs, setLastArgs] = useState('');
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
   const [externalWarnings, setExternalWarnings] = useState<string[]>([]);
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const sessions = useSessionStore((state) => state.sessions);
   const alertConfig = useSessionStore((state) => state.alertConfig);
+
+  // 加载模板列表
+  useEffect(() => {
+    if (visible && window.electronAPI?.templateList) {
+      window.electronAPI.templateList().then((list: TemplateItem[]) => {
+        setTemplates(list);
+      }).catch(() => setTemplates([]));
+    }
+  }, [visible]);
+
+  // 选择模板时填充表单
+  const handleSelectTemplate = (template: TemplateItem | null) => {
+    if (!template) {
+      // 重置为不使用模板
+      setSelectedTemplateId('');
+      setWorkDir(lastWorkDir || '');
+      setCustomArgs(lastArgs || '');
+      setName('');
+      setNameManuallyEdited(false);
+      return;
+    }
+    setSelectedTemplateId(template.id);
+    setWorkDir(template.workDir);
+    setCustomArgs(template.args);
+    setUseLastDir(false); // 禁用"使用上次目录"，确保使用模板目录
+    // 自动生成名称
+    if (!nameManuallyEdited) {
+      setName(generateSessionName(template.workDir));
+    }
+  };
 
   // 从路径生成会话名称
   const generateSessionName = useCallback((path: string): string => {
@@ -190,6 +230,11 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
         localStorage.setItem('lastArgs', args);
       }
 
+      // 记录模板使用次数
+      if (selectedTemplateId && window.electronAPI?.templateUse) {
+        window.electronAPI.templateUse(selectedTemplateId).catch(() => { /* ignore */ });
+      }
+
       onCreate({
         name: name.trim() || undefined,
         workDir: finalWorkDir || undefined,
@@ -253,6 +298,38 @@ const CreateSessionDialog: React.FC<CreateSessionDialogProps> = ({
 
         {/* 内容 */}
         <div className="p-4 space-y-4">
+          {/* 模板选择 */}
+          {templates.length > 0 && (
+            <div className="space-y-2">
+              <label className="text-xs text-dark-400">从模板创建</label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => handleSelectTemplate(null)}
+                  className={`px-3 py-1.5 rounded text-xs transition-colors ${
+                    !selectedTemplateId
+                      ? 'bg-accent-primary text-dark-900'
+                      : 'bg-dark-700 text-dark-300 hover:bg-dark-600'
+                  }`}
+                >
+                  不使用模板
+                </button>
+                {templates.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => handleSelectTemplate(t)}
+                    className={`px-3 py-1.5 rounded text-xs transition-colors ${
+                      selectedTemplateId === t.id
+                        ? 'bg-accent-primary text-dark-900'
+                        : 'bg-dark-700 text-dark-300 hover:bg-dark-600'
+                    }`}
+                  >
+                    {t.name} ({t.useCount}次)
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 会话名称（可选） */}
           <div className="space-y-1.5">
             <label className="text-xs text-dark-400">会话名称（可选）</label>

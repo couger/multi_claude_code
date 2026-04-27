@@ -28,6 +28,9 @@ Thumbs.db
 # Claude Code Manager data
 .claude-code-manager/
 
+# Whisper binary (large binary files)
+src/whisper-bin-x64/
+
 # TypeScript cache
 *.tsbuildinfo
 

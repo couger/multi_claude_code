@@ -10,6 +10,7 @@ export interface ElectronAPI {
 
   // 对话框
   selectWorkDir: () => Promise<string | null>;
+  selectWhisperPath: () => Promise<string | null>;
 
   // 窗口控制
   minimizeWindow: () => void;
@@ -20,6 +21,9 @@ export interface ElectronAPI {
   toggleAutoHideWindow: () => void;
   hideWindowToEdge: () => void;
   restoreWindow: () => void;
+  setWindowOpacity: (opacity: number) => Promise<{ success: boolean; message?: string }>;
+  getWindowOpacity: () => Promise<number>;
+  onWindowOpacityChanged: (callback: (opacity: number) => void) => void;
 
   // 事件监听
   onSessionCreated: (callback: (data: any) => void) => void;
@@ -89,11 +93,17 @@ export interface ElectronAPI {
   // 语音交互
   startListening: () => void;
   stopListening: () => void;
+  sendVoiceResult: (text: string) => void;
   speakText: (text: string) => Promise<string>;
+  getVoiceConfig: () => Promise<any>;
   onVoiceResult: (callback: (data: { text: string }) => void) => void;
   onVoiceSpeak: (callback: (data: any) => void) => void;
   onVoiceStartListening: (callback: () => void) => void;
   onVoiceStopListening: (callback: () => void) => void;
+  onVoiceCommand: (callback: (data: any) => void) => void;
+  executeVoiceCommand: (command: any) => Promise<any>;
+  sendAudioData: (audioData: ArrayBuffer) => void;
+  recognizeAudio: (audioData: ArrayBuffer) => Promise<string>;
 
   // 会话模板
   templateList: () => Promise<any[]>;

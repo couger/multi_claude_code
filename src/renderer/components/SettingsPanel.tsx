@@ -6,13 +6,14 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Session, useSessionStore } from '../stores/sessionStore';
 import { DisplayMode, AlertType, AlertNotifyMode, AlertSeverity } from '../../shared/constants';
+import { useWhisperService } from '../hooks/useWhisperService';
 
 // ======================== 类型定义 ========================
 
 type TabKey = 'general' | 'groups' | 'performance' | 'remote' | 'alerts' | 'ai' | 'voice' | 'templates';
 
 // AI配置接口（本地模型版本）
-interface AIConfig {
+interface AIMonitoringConfig {
   enabled: boolean;
   apiUrl: string;
   modelName: string;
@@ -21,6 +22,18 @@ interface AIConfig {
   unhealthyThreshold: number;
   recoverThreshold: number;
   latencyWarningThreshold: number;
+}
+
+// AI配置接口（OpenAI版本）
+interface AIConfig {
+  enabled: boolean;
+  provider: 'openai' | 'anthropic' | 'ollama' | 'custom';
+  apiKey: string;
+  apiBase: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  contextLength: number;
 }
 
 // AI状态
@@ -50,6 +63,13 @@ interface NotificationConfig {
 // 语音配置
 interface VoiceConfig {
   ttsEngine: 'edge-tts' | 'piper' | 'web-speech';
+  sttEngine: 'whisper' | 'xfyun' | 'baidu' | 'custom';
+  sttApiKey?: string;        // 云服务 API Key（讯飞/百度/自定义）
+  sttApiSecret?: string;   // 云服务 API Secret
+  sttAppId?: string;       // 讯飞 App ID
+  whisperPath?: string;   // Whisper 可执行文件路径（原生模式）
+  whisperUseWasm?: boolean; // 使用 WASM 模式（默认 true）
+  whisperModelId?: string;  // WASM 模型 ID
   speechRate: number;
   speechVolume: number;
   enabled: boolean;
@@ -77,6 +97,59 @@ interface GeneralSettings {
   minimizeToTrayOnClose?: boolean;
   hideToPrimary?: boolean; // 隐藏到主显示器而非当前显示器
 }
+
+// 窗口透明度滑块组件（暂时禁用）
+/*
+const WindowOpacitySlider: React.FC = () => {
+  const [opacity, setOpacity] = useState(1.0);
+  const [isElectron, setIsElectron] = useState(false);
+
+  useEffect(() => {
+    setIsElectron(window.electronAPI?.isElectron ?? false);
+    if (window.electronAPI?.getWindowOpacity) {
+      window.electronAPI.getWindowOpacity().then((value) => {
+        setOpacity(value);
+      }).catch(() => { });
+    }
+  }, []);
+
+  const handleOpacityChange = async (newOpacity: number) => {
+    setOpacity(newOpacity);
+    if (window.electronAPI?.setWindowOpacity) {
+      try {
+        await window.electronAPI.setWindowOpacity(newOpacity);
+      } catch (e) {
+        console.error('设置窗口透明度失败:', e);
+      }
+    }
+  };
+
+  if (!isElectron) {
+    return (
+      <div className="flex items-center gap-3 p-2 bg-dark-900 rounded">
+        <span className="text-xs text-dark-400">仅 Electron 环境下可用</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-3 p-2 bg-dark-900 rounded">
+      <span className="text-xs text-dark-400">透明</span>
+      <input
+        type="range"
+        min="0.3"
+        max="1"
+        step="0.05"
+        value={opacity}
+        onChange={(e) => handleOpacityChange(parseFloat(e.target.value))}
+        className="flex-1 accent-accent-primary"
+      />
+      <span className="text-xs text-dark-400">不透明</span>
+      <span className="text-xs text-dark-200 font-mono w-12 text-center">{Math.round(opacity * 100)}%</span>
+    </div>
+  );
+};
+*/
 
 const GeneralTab: React.FC<{
   displayMode: DisplayMode;
@@ -756,9 +829,12 @@ const AITab: React.FC = () => {
     setTesting(false);
   };
 
+  // 如果未启用，灰色不可操作（但开关按钮可以点击）
+  const isDisabled = !config.enabled;
+
   return (
     <div className="space-y-5">
-      {/* 启用开关 */}
+      {/* 启用开关 - 始终可用 */}
       <div className="flex items-center justify-between p-2 bg-dark-900 rounded">
         <div>
           <div className="text-sm text-dark-200 font-medium">启用助手AI</div>
@@ -776,6 +852,8 @@ const AITab: React.FC = () => {
         </button>
       </div>
 
+      {/* 其余内容 - 禁用时灰色不可操作 */}
+      <div className="space-y-5">
       {/* 提供商选择 */}
       <div className="space-y-2">
         <label className="text-xs text-dark-400">AI提供商</label>
@@ -1188,6 +1266,7 @@ const AITab: React.FC = () => {
           </div>
         </div>
       )}
+      </div>{/* 关闭禁用 div */}
     </div>
   );
 };
@@ -2018,13 +2097,184 @@ const _RemoteTab: React.FC<{ visible: boolean; settings?: GeneralSettings; onSet
   );
 };
 
+// ======================== 子组件：Whisper WASM 配置 ========================
+
+interface WhisperWasmConfigProps {
+  useWasm: boolean;
+  whisperPath: string;
+  modelId: string;
+  onUseWasmChange: (v: boolean) => void;
+  onWhisperPathChange: (v: string) => void;
+  onModelIdChange: (v: string) => void;
+}
+
+const WHISPER_MODELS = [
+  { id: 'tiny', label: 'Tiny (75MB)', desc: '最快，多语言' },
+  { id: 'base', label: 'Base (142MB)', desc: '平衡，多语言' },
+  { id: 'small', label: 'Small (466MB)', desc: '较准，多语言' },
+  { id: 'medium-q5_0', label: 'Medium Q5 (515MB)', desc: '量化，多语言' },
+  { id: 'large-q5_0', label: 'Large Q5 (1030MB)', desc: '最准，量化，多语言' },
+];
+
+const WhisperWasmConfig: React.FC<WhisperWasmConfigProps> = ({
+  useWasm, whisperPath, modelId, onUseWasmChange, onWhisperPathChange, onModelIdChange,
+}) => {
+  const { state: wsState, checkSupport, loadModel, clearCache } = useWhisperService();
+
+  useEffect(() => {
+    checkSupport();
+  }, []);
+
+  return (
+    <div className="space-y-2 bg-dark-900 p-2 rounded">
+      {/* WASM / 原生 切换 */}
+      <div className="flex items-center gap-3">
+        <label className="text-xs text-dark-400 font-medium">识别模式</label>
+        <button
+          onClick={() => onUseWasmChange(true)}
+          className={`px-2 py-1 rounded text-xs transition-colors ${
+            useWasm ? 'bg-accent-primary text-white' : 'bg-dark-700 text-dark-300 hover:bg-dark-600'
+          }`}
+        >
+          浏览器 WASM
+        </button>
+        <button
+          onClick={() => onUseWasmChange(false)}
+          className={`px-2 py-1 rounded text-xs transition-colors ${
+            !useWasm ? 'bg-accent-primary text-white' : 'bg-dark-700 text-dark-300 hover:bg-dark-600'
+          }`}
+        >
+          原生可执行文件
+        </button>
+      </div>
+
+      {useWasm ? (
+        <div className="space-y-2">
+          {/* WASM 支持状态 */}
+          {wsState.wasmSupported === false && (
+            <div className="text-xs text-red-400 bg-red-900/20 px-2 py-1 rounded">
+              当前浏览器不支持 WASM 语音识别所需的特性
+            </div>
+          )}
+
+          {/* 模型选择 */}
+          <div className="space-y-1">
+            <label className="text-xs text-dark-400">模型大小</label>
+            <select
+              value={modelId}
+              onChange={(e) => onModelIdChange(e.target.value)}
+              className="w-full px-2 py-1.5 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 focus:border-accent-primary focus:outline-none"
+            >
+              {WHISPER_MODELS.map(m => (
+                <option key={m.id} value={m.id}>{m.label} - {m.desc}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 加载按钮 + 进度 */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => loadModel(modelId as any)}
+              disabled={wsState.loading}
+              className={`px-3 py-1.5 rounded text-xs transition-colors ${
+                wsState.loading
+                  ? 'bg-dark-600 text-dark-400 cursor-not-allowed'
+                  : wsState.modelLoaded
+                    ? 'bg-green-700 text-white hover:bg-green-600'
+                    : 'bg-accent-primary text-white hover:opacity-90'
+              }`}
+            >
+              {wsState.loading
+                ? `下载中 ${wsState.loadingProgress}%`
+                : wsState.modelLoaded
+                  ? '已加载（重新下载）'
+                  : '下载模型'}
+            </button>
+            {wsState.modelLoaded && wsState.currentModel && (
+              <span className="text-xs text-green-400">
+                {WHISPER_MODELS.find(m => m.id === wsState.currentModel)?.label || wsState.currentModel} 已就绪
+              </span>
+            )}
+          </div>
+
+          {/* 进度条 */}
+          {wsState.loading && (
+            <div className="w-full bg-dark-700 rounded-full h-1.5">
+              <div
+                className="bg-accent-primary h-1.5 rounded-full transition-all duration-300"
+                style={{ width: `${wsState.loadingProgress}%` }}
+              />
+            </div>
+          )}
+
+          {/* 错误信息 */}
+          {wsState.error && (
+            <div className="text-xs text-red-400 bg-red-900/20 px-2 py-1 rounded break-all">
+              {wsState.error}
+            </div>
+          )}
+
+          {/* 清除缓存 */}
+          {wsState.modelLoaded && (
+            <button
+              onClick={async () => { await clearCache(); }}
+              className="text-xs text-dark-500 hover:text-dark-300 underline"
+            >
+              清除模型缓存
+            </button>
+          )}
+
+          <div className="text-xs text-dark-500">
+            模型文件下载后缓存在浏览器中，后续无需重复下载
+          </div>
+        </div>
+      ) : (
+        /* 原生模式：whisper.exe 路径 */
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={whisperPath}
+              onChange={(e) => onWhisperPathChange(e.target.value)}
+              placeholder="默认: src/whisper-bin-x64/Release/whisper-cli.exe"
+              className="flex-1 px-2 py-1.5 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+            />
+            <button
+              onClick={async () => {
+                if (window.electronAPI?.selectWhisperPath) {
+                  const path = await window.electronAPI.selectWhisperPath();
+                  if (path) onWhisperPathChange(path);
+                }
+              }}
+              className="px-3 py-1.5 bg-dark-700 text-dark-300 rounded text-xs hover:bg-dark-600"
+            >
+              浏览
+            </button>
+          </div>
+          <div className="text-xs text-dark-500">
+            选择 whisper.cpp 编译后的可执行文件路径
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ======================== 子组件：语音设置 ========================
 
-const VoiceTab: React.FC = () => {
+interface VoiceTabProps {
+  aiEnabled: boolean;
+}
+
+const VoiceTab: React.FC<VoiceTabProps> = ({ aiEnabled }) => {
   const [config, setConfig] = useState<VoiceConfig>(() => {
     const saved = localStorage.getItem('voiceConfig');
     return saved ? JSON.parse(saved) : {
-      ttsEngine: 'web-speech' as const,
+      ttsEngine: 'edge-tts' as const,
+      sttEngine: 'whisper' as const,
+      sttApiKey: '',
+      sttApiSecret: '',
+      sttAppId: '',
       speechRate: 1.0,
       speechVolume: 1.0,
       enabled: true,
@@ -2034,59 +2284,294 @@ const VoiceTab: React.FC = () => {
   const [speaking, setSpeaking] = useState(false);
   const [testText, setTestText] = useState('你好，我是你的语音助手。');
   const [testing, setTesting] = useState<'none' | 'listen' | 'speak'>('none');
+  const [debugLogs, setDebugLogs] = useState<{ time: string; msg: string }[]>([]);
+
+  // 语音识别引用
+  const isListeningRef = useRef(false);
+
+  // 环境检查状态
+  const [envWarnings, setEnvWarnings] = useState<{ type: string; message: string }[]>([]);
+
+  // 检查运行环境
+  useEffect(() => {
+    const warnings: { type: string; message: string }[] = [];
+
+    // 检查 TTS 引擎可用性
+    const ttsAvailable: Record<string, boolean> = {
+      'edge-tts': true, // 内置
+      'piper': false,   // 需要安装
+      'web-speech': true, // 浏览器原生
+    };
+
+    // 检查 STT 引擎可用性
+    const sttAvailable: Record<string, boolean> = {
+      'whisper': config.whisperUseWasm !== false
+        ? true  // WASM 模式默认可用（模型可在设置中下载）
+        : !!(config.whisperPath && config.whisperPath.trim() !== ''),
+      'xfyun': !!(config.sttAppId && config.sttApiKey), // 需要配置
+      'baidu': !!(config.sttApiKey && config.sttApiSecret), // 需要配置
+    };
+
+    // 只添加不满足条件的警告
+    if (config.ttsEngine === 'piper' && !ttsAvailable.piper) {
+      warnings.push({ type: 'tts-piper', message: 'Piper 未安装，无法使用' });
+    }
+
+    // STT 警告
+    if (config.sttEngine === 'whisper' && !sttAvailable.whisper) {
+      warnings.push({ type: 'stt-whisper', message: 'Whisper 路径未配置，请填写可执行文件路径' });
+    } else if (config.sttEngine === 'xfyun' && !sttAvailable.xfyun) {
+      warnings.push({ type: 'stt-xfyun', message: '讯飞 API 未配置，请填写 AppID 和 API Key' });
+    } else if (config.sttEngine === 'baidu' && !sttAvailable.baidu) {
+      warnings.push({ type: 'stt-baidu', message: '百度 API 未配置，请填写 API Key 和 Secret' });
+    }
+
+    setEnvWarnings(warnings);
+  }, [config.ttsEngine, config.sttEngine, config.sttApiKey, config.sttApiSecret, config.sttAppId, config.whisperPath]);
+
+  // 合并 AI 启用状态和语音配置启用状态
+  const isEnabled = aiEnabled && config.enabled;
+
+  // 添加调试日志
+  const addDebugLog = (msg: string) => {
+    const now = new Date().toLocaleTimeString();
+    setDebugLogs(prev => [...prev.slice(-50), { time: now, msg }]); // 保留最近50条
+  };
 
   // 保存配置
   useEffect(() => {
     localStorage.setItem('voiceConfig', JSON.stringify(config));
   }, [config]);
 
-  // 处理录音测试
+  // 处理录音测试 - 使用 MediaRecorder 录制音频，发送到后端识别
   const handleListenTest = async () => {
+    addDebugLog('开始录音测试...');
+
+    // 获取 STT 引擎配置
+    addDebugLog('STT 引擎: ' + config.sttEngine);
+
     if (testing === 'listen') {
+      // 停止录音
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
       setTesting('none');
       setIsListening(false);
+      isListeningRef.current = false;
       window.electronAPI?.stopListening?.();
+      addDebugLog('停止录音');
       return;
     }
 
     try {
       setTesting('listen');
       setIsListening(true);
-      await window.electronAPI?.startListening?.();
+      isListeningRef.current = true;
 
-      // 监听语音识别结果
-      const handleResult = (data: { text: string }) => {
-        if (data.text) {
-          alert(`语音识别结果: ${data.text}`);
-          window.electronAPI?.stopListening?.();
-          setIsListening(false);
-          setTesting('none');
-          window.electronAPI?.removeListener?.('voice:result', handleResult);
+      if (window.electronAPI?.startListening) {
+        window.electronAPI.startListening();
+      }
+
+      // 获取麦克风权限
+      addDebugLog('请求麦克风权限...');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      addDebugLog('麦克风权限已获取');
+
+      // 创建 MediaRecorder - 尝试使用支持的格式
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : undefined;
+      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+      const audioChunks: Blob[] = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
         }
       };
-      window.electronAPI?.onVoiceResult?.(handleResult);
-    } catch (e) {
-      console.error('语音识别测试失败:', e);
+
+            mediaRecorder.onstop = async () => {
+        addDebugLog('录音完成，开始识别...');
+
+        if (audioChunks.length === 0) {
+          addDebugLog('没有音频数据');
+          return;
+        }
+
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+
+        try {
+          const webmBuffer = await audioBlob.arrayBuffer();
+          addDebugLog('音频大小: ' + webmBuffer.byteLength + ' bytes');
+
+          // 优先使用 WASM 前端识别
+          const { whisperService } = await import('../services/WhisperService');
+          const wsState = whisperService.getState();
+          if (wsState.modelLoaded) {
+            addDebugLog('使用 WASM 前端识别...');
+            const text = await whisperService.transcribe(webmBuffer);
+            addDebugLog('WASM 识别结果: ' + (text || '(空)'));
+          } else {
+            addDebugLog('发送音频到后端识别...');
+            if (window.electronAPI?.recognizeAudio) {
+              const result = await window.electronAPI.recognizeAudio(webmBuffer);
+              addDebugLog('识别结果: ' + (result || '(空)'));
+            } else {
+              addDebugLog('错误: recognizeAudio API 不可用');
+            }
+          }
+        } catch (e: any) {
+          addDebugLog('识别错误: ' + e.message);
+        }
+
+        // 清理
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+      };
+
+      mediaRecorder.onerror = (event: any) => {
+        addDebugLog('录音错误: ' + event.error);
+      };
+
+      // 开始录音
+      mediaRecorder.start(100); // 每 100ms 收集一次数据
+      mediaRecorderRef.current = mediaRecorder;
+      addDebugLog('开始录音...');
+    } catch (e: any) {
+      console.error('录音测试失败:', e);
+      addDebugLog('错误: ' + e.message);
       setTesting('none');
       setIsListening(false);
-      alert('录音测试失败，请检查麦克风是否连接');
+      isListeningRef.current = false;
     }
   };
 
-  // 处理 TTS 播放测试
+  // MediaRecorder 和 stream 引用
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  // 处理 TTS 播放测试 - 直接使用 Web Speech API
   const handleSpeakTest = async () => {
-    if (!testText.trim()) return;
+    addDebugLog(`开始 TTS 测试: "${testText}"`);
+    if (!testText.trim()) {
+      addDebugLog('错误: 测试文本为空');
+      return;
+    }
 
     try {
       setTesting('speak');
-      await window.electronAPI?.speakText?.(testText);
-      setTimeout(() => setTesting('none'), 500);
-    } catch (e) {
+      setSpeaking(true);
+
+      // 直接使用 Web Speech API，不通过 IPC
+      if (!('speechSynthesis' in window)) {
+        addDebugLog('错误: Web Speech API 不可用');
+        alert('Web Speech API 不可用');
+        setTesting('none');
+        setSpeaking(false);
+        return;
+      }
+
+      window.speechSynthesis.cancel();
+      addDebugLog('已取消当前播报');
+
+      // 获取语音列表
+      let voices = window.speechSynthesis.getVoices();
+      addDebugLog(`可用语音数量: ${voices.length}`);
+
+      // 如果语音列表为空，等待加载
+      if (voices.length === 0) {
+        addDebugLog('等待语音加载...');
+        await new Promise<void>((resolve) => {
+          const onVoicesChanged = () => {
+            voices = window.speechSynthesis.getVoices();
+            addDebugLog(`语音已加载，��量: ${voices.length}`);
+            window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+            resolve();
+          };
+          window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
+          // 超时保护
+          setTimeout(() => {
+            window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+            resolve();
+          }, 3000);
+        });
+      }
+
+      const utterance = new SpeechSynthesisUtterance(testText);
+      utterance.rate = config.speechRate;
+      utterance.volume = config.speechVolume;
+
+      // 尝试选择中文语音
+      const zhVoice = voices.find(v => v.lang.startsWith('zh'));
+      if (zhVoice) {
+        utterance.voice = zhVoice;
+        addDebugLog(`使用语音: ${zhVoice.name} (${zhVoice.lang})`);
+      } else if (voices.length > 0) {
+        // 使用第一个可用语音
+        utterance.voice = voices[0];
+        addDebugLog(`使用默认语音: ${voices[0].name} (${voices[0].lang})`);
+      } else {
+        addDebugLog('警告: 没有任何可用语音');
+      }
+
+      utterance.onstart = () => {
+        addDebugLog('TTS 开始播放');
+      };
+      utterance.onend = () => {
+        addDebugLog('TTS 播放完成');
+        setTesting('none');
+        setSpeaking(false);
+      };
+      utterance.onerror = (event) => {
+        addDebugLog(`错误: ${event.error}`);
+        alert(`TTS 播放错误: ${event.error}`);
+        setTesting('none');
+        setSpeaking(false);
+      };
+
+      window.speechSynthesis.speak(utterance);
+      addDebugLog('speak() 已调用');
+    } catch (e: any) {
       console.error('TTS播放测试失败:', e);
+      addDebugLog(`异常: ${e.message}`);
       alert('语音播放测试失败');
       setTesting('none');
+      setSpeaking(false);
     }
   };
+
+  // 如果 AI 未启用，显示提示
+  if (!aiEnabled) {
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center justify-between p-2 bg-dark-900 rounded opacity-50">
+          <div>
+            <div className="text-sm text-dark-200 font-medium">启用语音交互</div>
+            <div className="text-xs text-dark-500">需要先在"助手AI"中启用 AI 功能</div>
+          </div>
+          <div className="relative w-10 h-5 rounded-full bg-dark-600">
+            <span className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-dark-400" />
+          </div>
+        </div>
+        <div className="text-xs text-dark-500 bg-dark-900/50 px-3 py-2 rounded">
+          <p>提示：请先在"助手AI"标签页中启用 AI 功能，然后才能配置语音交互。</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 如果未启用，显示灰色不可操作的界面
+  const isDisabled = !config.enabled;
 
   return (
     <div className="space-y-5">
@@ -2108,67 +2593,208 @@ const VoiceTab: React.FC = () => {
         </button>
       </div>
 
-      {/* TTS 引擎选择 */}
-      <div className="space-y-2">
-        <label className="text-xs text-dark-400">语音合成引擎</label>
-        <div className="flex gap-2">
-          {(['edge-tts', 'piper', 'web-speech'] as const).map(engine => (
-            <button
-              key={engine}
-              onClick={() => setConfig({ ...config, ttsEngine: engine })}
-              className={`flex-1 text-xs py-2 rounded transition-colors ${
-                config.ttsEngine === engine
-                  ? 'bg-accent-primary text-dark-900'
-                  : 'bg-dark-900 text-dark-300 hover:bg-dark-700'
-              }`}
-            >
-              {engine === 'edge-tts' ? 'Edge TTS' : engine === 'piper' ? 'Piper' : 'Web Speech'}
-            </button>
-          ))}
+      {/* ========== 语音输出（TTS）区域 ========== */}
+      <div className="border border-dark-600 rounded-lg p-3 space-y-3 bg-dark-800/50">
+        <div className="flex items-center gap-2">
+          <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          </svg>
+          <span className="text-sm font-medium text-dark-200">语音输出 (TTS)</span>
+        </div>
+
+        {/* 环境警告 */}
+        {envWarnings.filter(w => w.type.startsWith('tts')).map((w, i) => (
+          <div key={i} className="text-xs text-red-400 bg-red-900/20 px-2 py-1 rounded">
+            {w.message}
+          </div>
+        ))}
+
+        {/* TTS 引擎选择 */}
+        <div className="space-y-2">
+          <label className="text-xs text-dark-400">合成引擎</label>
+          <select
+            value={config.ttsEngine}
+            onChange={(e) => setConfig({ ...config, ttsEngine: e.target.value as any })}
+            className="w-full px-2 py-1.5 bg-dark-900 border border-dark-600 rounded text-xs text-dark-100 focus:border-accent-primary focus:outline-none"
+          >
+            <option value="edge-tts">Edge TTS (在线)</option>
+            <option value="web-speech">Web Speech (浏览器)</option>
+            <option value="piper">Piper (离线，需安装)</option>
+          </select>
+        </div>
+
+        {/* 语速调节 */}
+        <div className="space-y-2">
+          <label className="text-xs text-dark-400">语速: {config.speechRate.toFixed(1)}x</label>
+          <input
+            type="range"
+            min="0.5"
+            max="2"
+            step="0.1"
+            value={config.speechRate}
+            onChange={(e) => setConfig({ ...config, speechRate: parseFloat(e.target.value) })}
+            className="w-full accent-accent-primary"
+          />
+        </div>
+
+        {/* 音量调节 */}
+        <div className="space-y-2">
+          <label className="text-xs text-dark-400">音量: {Math.round(config.speechVolume * 100)}%</label>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.1"
+            value={config.speechVolume}
+            onChange={(e) => setConfig({ ...config, speechVolume: parseFloat(e.target.value) })}
+            className="w-full accent-accent-primary"
+          />
+        </div>
+
+        {/* TTS 测试输入和按钮 */}
+        <div className="space-y-2 pt-2 border-t border-dark-700">
+          <input
+            type="text"
+            value={testText}
+            onChange={(e) => setTestText(e.target.value)}
+            disabled={!isEnabled || testing === 'listen'}
+            placeholder="输入要播放的文本..."
+            className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none disabled:opacity-50"
+          />
+          <button
+            onClick={handleSpeakTest}
+            disabled={!isEnabled || testing === 'listen' || !testText.trim()}
+            className={`w-full py-2 rounded text-xs transition-colors flex items-center justify-center gap-2 ${
+              speaking
+                ? 'bg-blue-600/20 text-blue-400'
+                : isEnabled && testing !== 'listen' && testText.trim()
+                  ? 'bg-blue-600/20 text-blue-400 hover:bg-blue-600/30'
+                  : 'bg-dark-900 text-dark-500 cursor-not-allowed'
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            </svg>
+            {speaking ? '播放中...' : '测试播放'}
+          </button>
         </div>
       </div>
 
-      {/* 语速调节 */}
-      <div className="space-y-2">
-        <label className="text-xs text-dark-400">语速: {config.speechRate.toFixed(1)}x</label>
-        <input
-          type="range"
-          min="0.5"
-          max="2"
-          step="0.1"
-          value={config.speechRate}
-          onChange={(e) => setConfig({ ...config, speechRate: parseFloat(e.target.value) })}
-          className="w-full accent-accent-primary"
-        />
-      </div>
-
-      {/* 音量调节 */}
-      <div className="space-y-2">
-        <label className="text-xs text-dark-400">音量: {Math.round(config.speechVolume * 100)}%</label>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.1"
-          value={config.speechVolume}
-          onChange={(e) => setConfig({ ...config, speechVolume: parseFloat(e.target.value) })}
-          className="w-full accent-accent-primary"
-        />
-      </div>
-
-      {/* 测试区域 */}
-      <div className="border-t border-dark-700 pt-4 space-y-3">
-        <label className="text-xs text-dark-400 font-medium">语音测试</label>
-
-        {/* 录音测试 */}
+      {/* ========== 语音输入（STT）区域 ========== */}
+      <div className="border border-dark-600 rounded-lg p-3 space-y-3 bg-dark-800/50">
         <div className="flex items-center gap-2">
+          <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-4a6 6 0 01-3.162-5.288m6.162 2.288l5.272 5.272m-5.272-5.272A6 6 0 0112 5z" />
+          </svg>
+          <span className="text-sm font-medium text-dark-200">语音输入 (STT)</span>
+        </div>
+
+        {/* 环境警告 */}
+        {envWarnings.filter(w => w.type.startsWith('stt')).map((w, i) => (
+          <div key={i} className="text-xs text-red-400 bg-red-900/20 px-2 py-1 rounded">
+            {w.message}
+          </div>
+        ))}
+
+        {/* STT 引擎选择 - 下拉选择 */}
+        <div className="space-y-2">
+          <label className="text-xs text-dark-400">识别引擎</label>
+          <select
+            value={config.sttEngine}
+            onChange={(e) => setConfig({ ...config, sttEngine: e.target.value as any })}
+            className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 focus:border-accent-primary focus:outline-none"
+          >
+            <option value="whisper">Whisper (离线)</option>
+            <option value="xfyun">讯飞语音 (在线)</option>
+            <option value="baidu">百度语音 (在线)</option>
+            <option value="custom">自定义 API</option>
+          </select>
+        </div>
+
+        {/* Whisper WASM / 原生配置 */}
+        {config.sttEngine === 'whisper' && (
+          <WhisperWasmConfig
+            useWasm={config.whisperUseWasm !== false}
+            whisperPath={config.whisperPath || ''}
+            modelId={config.whisperModelId || 'base'}
+            onUseWasmChange={(v) => setConfig({ ...config, whisperUseWasm: v })}
+            onWhisperPathChange={(v) => setConfig({ ...config, whisperPath: v })}
+            onModelIdChange={(v) => setConfig({ ...config, whisperModelId: v })}
+          />
+        )}
+
+        {/* 讯飞 API 配置 */}
+        {config.sttEngine === 'xfyun' && (
+          <div className="space-y-2 bg-dark-900 p-2 rounded">
+            <div className="text-xs text-dark-400 font-medium">讯飞 API 配置</div>
+            <input
+              type="text"
+              value={config.sttAppId || ''}
+              onChange={(e) => setConfig({ ...config, sttAppId: e.target.value })}
+              placeholder="AppID"
+              className="w-full px-2 py-1.5 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+            />
+            <input
+              type="password"
+              value={config.sttApiKey || ''}
+              onChange={(e) => setConfig({ ...config, sttApiKey: e.target.value })}
+              placeholder="API Key"
+              className="w-full px-2 py-1.5 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+            />
+          </div>
+        )}
+
+        {/* 百度 API 配置 */}
+        {config.sttEngine === 'baidu' && (
+          <div className="space-y-2 bg-dark-900 p-2 rounded">
+            <div className="text-xs text-dark-400 font-medium">百度 API 配置</div>
+            <input
+              type="password"
+              value={config.sttApiKey || ''}
+              onChange={(e) => setConfig({ ...config, sttApiKey: e.target.value })}
+              placeholder="API Key"
+              className="w-full px-2 py-1.5 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+            />
+            <input
+              type="password"
+              value={config.sttApiSecret || ''}
+              onChange={(e) => setConfig({ ...config, sttApiSecret: e.target.value })}
+              placeholder="API Secret"
+              className="w-full px-2 py-1.5 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+            />
+          </div>
+        )}
+
+        {/* 自定义 API 配置 */}
+        {config.sttEngine === 'custom' && (
+          <div className="space-y-2 bg-dark-900 p-2 rounded">
+            <div className="text-xs text-dark-400 font-medium">自定义 STT API</div>
+            <input
+              type="text"
+              value={config.sttApiKey || ''}
+              onChange={(e) => setConfig({ ...config, sttApiKey: e.target.value })}
+              placeholder="API 地址"
+              className="w-full px-2 py-1.5 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+            />
+            <input
+              type="password"
+              value={config.sttApiSecret || ''}
+              onChange={(e) => setConfig({ ...config, sttApiSecret: e.target.value })}
+              placeholder="API Key"
+              className="w-full px-2 py-1.5 bg-dark-800 border border-dark-600 rounded text-xs text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none"
+            />
+          </div>
+        )}
+
+        {/* 录音测试按钮 */}
+        <div className="flex items-center gap-2 pt-2 border-t border-dark-700">
           <button
             onClick={handleListenTest}
-            disabled={!config.enabled || testing === 'speak'}
+            disabled={!isEnabled || testing === 'speak'}
             className={`flex-1 py-2 rounded text-xs transition-colors flex items-center justify-center gap-2 ${
               isListening
                 ? 'bg-red-600/20 text-red-400'
-                : config.enabled && testing !== 'speak'
+                : isEnabled && testing !== 'speak'
                   ? 'bg-green-600/20 text-green-400 hover:bg-green-600/30'
                   : 'bg-dark-900 text-dark-500 cursor-not-allowed'
             }`}
@@ -2181,39 +2807,44 @@ const VoiceTab: React.FC = () => {
           <span className="text-xs text-dark-400">
             {isListening ? (
               <span className="flex items-center gap-1"><span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />录音中</span>
-            ) : '点击开始语音输入'}
+            ) : null}
           </span>
-        </div>
-
-        {/* TTS播放测试 */}
-        <div className="space-y-2">
-          <input
-            type="text"
-            value={testText}
-            onChange={(e) => setTestText(e.target.value)}
-            disabled={!config.enabled || testing === 'listen'}
-            placeholder="输入要播放的文本..."
-            className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded text-sm text-dark-100 placeholder-dark-500 focus:border-accent-primary focus:outline-none disabled:opacity-50"
-          />
-          <button
-            onClick={handleSpeakTest}
-            disabled={!config.enabled || testing === 'listen'}
-            className={`w-full py-2 rounded text-xs transition-colors ${
-              speaking
-                ? 'bg-blue-600/20 text-blue-400'
-                : config.enabled && testing !== 'listen'
-                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                  : 'bg-dark-900 text-dark-500 cursor-not-allowed'
-            }`}
-          >
-            {speaking ? '播放中...' : testing === 'speak' ? '测试中...' : '测试语音播报'}
-          </button>
         </div>
       </div>
 
-      {/* 提示 */}
-      <div className="text-xs text-dark-500 bg-dark-900/50 px-3 py-2 rounded">
-        <p>提示：录音功能需要点击麦克风按钮开始，语音播报会在标题栏显示蓝色闪烁提示。</p>
+      {/* 调试信息区域 - 公用元素 */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-dark-400 font-medium">调试信息</label>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                const text = debugLogs.map(l => `[${l.time}] ${l.msg}`).join('\n');
+                navigator.clipboard.writeText(text);
+              }}
+              className="text-xs text-dark-500 hover:text-dark-300"
+            >
+              复制
+            </button>
+            <button
+              onClick={() => setDebugLogs([])}
+              className="text-xs text-dark-500 hover:text-dark-300"
+            >
+              清空
+            </button>
+          </div>
+        </div>
+        <div className="bg-dark-900 rounded p-2 max-h-32 overflow-y-auto">
+          {debugLogs.length === 0 ? (
+            <span className="text-xs text-dark-500">暂无日志...</span>
+          ) : (
+            debugLogs.map((log, i) => (
+              <div key={i} className="text-xs text-dark-400 font-mono py-0.5">
+                <span className="text-dark-600">[{log.time}]</span> {log.msg}
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );
@@ -2483,6 +3114,18 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<TabKey>('general');
 
+  // 获取 AI 启用状态
+  const [aiEnabled, setAiEnabled] = useState(false);
+  useEffect(() => {
+    const saved = localStorage.getItem('aiConfig');
+    if (saved) {
+      try {
+        const config = JSON.parse(saved);
+        setAiEnabled(config.enabled === true);
+      } catch { /* ignore */ }
+    }
+  }, [activeTab]); // 当切换标签页时更新
+
   // 打开时重置到通用标签
   useEffect(() => {
     if (visible) setActiveTab('general');
@@ -2491,6 +3134,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   // 动态标签页：只在 Electron 环境中显示远程标签页
   const dynamicTabs = useMemo(() => {
     const tabs: { key: TabKey; label: string; icon: string }[] = [...TABS];
+    // 添加模板标签页（在分组之后）
+    tabs.splice(2, 0, { key: 'templates' as TabKey, label: '模板', icon: '📋' });
     // 检查是否是本地 Electron 环境
     if (window.electronAPI) {
       tabs.push({ key: 'remote' as TabKey, label: '网络', icon: '🌐' });
@@ -2501,8 +3146,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     tabs.push({ key: 'ai' as TabKey, label: '助手AI', icon: '🤖' });
     // 添加语音标签页（始终显示）
     tabs.push({ key: 'voice' as TabKey, label: '语音', icon: '🎤' });
-    // 添加模板标签页
-    tabs.push({ key: 'templates' as TabKey, label: '模板', icon: '📋' });
     return tabs;
   }, []);
 
@@ -2511,7 +3154,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
       <div
-        className="bg-dark-800 border border-dark-600 rounded-lg w-[560px] h-[600px] max-h-[85vh] shadow-2xl flex flex-col"
+        className="bg-dark-800 border border-dark-600 rounded-lg w-[800px] h-[720px] max-h-[90vh] shadow-2xl flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
@@ -2571,7 +3214,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             <AITab />
           )}
           {activeTab === 'voice' && (
-            <VoiceTab />
+            <VoiceTab aiEnabled={aiEnabled} />
           )}
           {activeTab === 'templates' && (
             <TemplatesTab />

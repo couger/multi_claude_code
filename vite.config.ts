@@ -63,11 +63,20 @@ export default defineConfig({
     },
   },
   base: './',
+  assetsInclude: ['**/*.wasm'],
+  optimizeDeps: {
+    exclude: ['@timur00kh/whisper.wasm'],
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    target: 'esnext',
   },
   server: {
     port: 5173,
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
   },
 });

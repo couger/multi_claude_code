@@ -58,6 +58,7 @@ export const IPC_CHANNELS = {
   GET_SESSION_OUTPUT: 'session:output',
   SEND_INPUT: 'session:input',
   SELECT_WORKDIR: 'dialog:selectWorkdir',
+  SELECT_WHISPER_PATH: 'dialog:selectWhisperPath',
   SET_NOTE: 'session:note',
   RESIZE_SESSION: 'session:resize',
 
@@ -135,6 +136,9 @@ export const IPC_CHANNELS = {
   WINDOW_TOGGLE_AUTO_HIDE: 'window:toggle-auto-hide',
   WINDOW_HIDE_TO_EDGE: 'window:hide-to-edge',
   WINDOW_RESTORE: 'window:restore-window',
+  WINDOW_SET_OPACITY: 'window:setOpacity',
+  WINDOW_GET_OPACITY: 'window:getOpacity',
+  WINDOW_OPACITY_CHANGED: 'window:opacityChanged',
 
   // 托盘
   TRAY_CREATE_SESSION: 'tray:create-session',
@@ -151,11 +155,16 @@ export const IPC_CHANNELS = {
   AI_UPDATE_AUTO_ANSWER_RULE: 'ai:updateAutoAnswerRule',
   AI_DELETE_AUTO_ANSWER_RULE: 'ai:deleteAutoAnswerRule',
 
-  // 语音交互（预留）
+  // 语音交互
   VOICE_START_LISTENING: 'voice:startListening',
+  VOICE_GET_CONFIG: 'voice:getConfig',
   VOICE_STOP_LISTENING: 'voice:stopListening',
   VOICE_SPEAK: 'voice:speak',
   VOICE_RESULT: 'voice:result',
+  VOICE_COMMAND: 'voice:command',
+  VOICE_EXECUTE_COMMAND: 'voice:executeCommand',
+  VOICE_AUDIO_DATA: 'voice:audioData',    // 前端发送音频数据
+  VOICE_RECOGNIZE: 'voice:recognize',     // 请求识别（返回结果）
 
   // 会话模板
   TEMPLATE_LIST: 'template:list',

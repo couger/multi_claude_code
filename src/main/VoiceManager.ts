@@ -2,13 +2,18 @@
  * 语音交互管理器 - TTS 播报 + STT 识别
  */
 
-import { sendToRenderer } from './index';
+import { app, sendToRenderer } from './index';
+import path from 'path';
 import { IPC_CHANNELS } from './constants';
 import { configManager } from './ConfigManager';
 
 interface VoiceConfig {
   ttsEngine: 'edge-tts' | 'piper' | 'web-speech';
-  sttEngine: 'web-speech' | 'whisper';
+  sttEngine: 'whisper' | 'xfyun' | 'baidu' | 'custom';
+  sttApiKey?: string;
+  sttApiSecret?: string;
+  sttAppId?: string;
+  whisperPath?: string;
   speechRate: number;
   speechVolume: number;
   speechVoice: string;
@@ -16,14 +21,16 @@ interface VoiceConfig {
 }
 
 interface VoiceCommand {
-  type: 'answer' | 'query' | 'control';
+  type: 'answer' | 'query' | 'control' | 'session' | 'ai_query';
+  action?: string;
   target?: string;
+  payload?: any;
   content: string;
 }
 
 const DEFAULT_VOICE_CONFIG: VoiceConfig = {
-  ttsEngine: 'web-speech',
-  sttEngine: 'web-speech',
+  ttsEngine: 'edge-tts',
+  sttEngine: 'whisper',  // 默认使用 Whisper 离线
   speechRate: 1.0,
   speechVolume: 1.0,
   speechVoice: '',
@@ -109,7 +116,6 @@ class VoiceManager {
   private async speakWithEdgeTTS(text: string): Promise<void> {
     // edge-tts 需要额外安装，这里先检查是否可用
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const edgeTTS = require('edge-tts');
       const communicate = new edgeTTS.Communicate(text, 'zh-CN-XiaoxiaoNeural');
       const chunks: Buffer[] = [];
@@ -179,14 +185,41 @@ class VoiceManager {
     sendToRenderer(IPC_CHANNELS.VOICE_RESULT, { text });
     this.parseVoiceCommand(text).then(command => {
       if (command) {
-        // VOICE_COMMAND 通道暂未定义，注释掉或改用其他通道
-        // sendToRenderer(IPC_CHANNELS.VOICE_COMMAND, command);
+        sendToRenderer(IPC_CHANNELS.VOICE_COMMAND, command);
       }
     }).catch(e => console.error('[VoiceManager] 解析语音命令失败:', e));
   }
 
   private async parseVoiceCommand(text: string): Promise<VoiceCommand | null> {
     const lowerText = text.toLowerCase();
+
+    // 会话控制命令
+    if (lowerText.includes('新建会话') || lowerText.includes('创建会话') || lowerText.includes('新开一个')) {
+      return { type: 'session', action: 'create', content: '正在创建新会话' };
+    }
+
+    if (lowerText.includes('关闭会话') || lowerText.includes('结束会话') || lowerText.includes('停止会话')) {
+      return { type: 'session', action: 'kill', target: 'current', content: '正在关闭会话' };
+    }
+
+    if (lowerText.includes('发送') || lowerText.includes('输入')) {
+      // 提取要发送的内容
+      const match = text.match(/发送[：:](.+)|输入[：:](.+)/i);
+      if (match) {
+        const input = match[1] || match[2];
+        return { type: 'session', action: 'send', content: input, payload: { input } };
+      }
+    }
+
+    // 切换到第N个会话
+    const sessionMatch = text.match(/切换.*?第[一二三三四五六七八九十\d]+[个]?|到第[一二三三四五六七八九十\d]+[个]?/i);
+    if (sessionMatch) {
+      const numMatch = text.match(/[一二三三四五六七八九十\d]+/);
+      if (numMatch) {
+        const num = parseInt(numMatch[0].replace(/[一二三四五六七八九十]/g, (c: string) => '一二三四五六七八九十'.indexOf(c).toString()));
+        return { type: 'session', action: 'switch', target: num.toString(), content: `切换到第${num}个会话` };
+      }
+    }
 
     // 控制命令
     if (lowerText.includes('静音') || lowerText.includes('关闭声音')) {
@@ -201,7 +234,7 @@ class VoiceManager {
     }
 
     // 查询命令
-    if (lowerText.includes('什么情况') || lowerText.includes('状态') || lowerText.includes('进度')) {
+    if (lowerText.includes('什么情况') || lowerText.includes('状态') || lowerText.includes('进度') || lowerText.includes('有多少')) {
       return { type: 'query', content: text };
     }
 
@@ -215,7 +248,407 @@ class VoiceManager {
       };
     }
 
-    return { type: 'answer', content: text };
+    // 无法识别的命令 → 发送到 AI 模型处理
+    return { type: 'ai_query', content: text };
+  }
+
+  // ========== 音频识别 ==========
+
+  // 识别音频数据（接收前端发来的 ArrayBuffer/Buffer）
+  async recognizeAudio(audioBuffer: Buffer): Promise<string> {
+    if (!this.config.enabled) return '';
+
+    console.log('[VoiceManager] 开始识别音频, 引擎:', this.config.sttEngine, '大小:', audioBuffer.length);
+
+    try {
+      let result = '';
+      switch (this.config.sttEngine) {
+        case 'whisper':
+          result = await this.recognizeWithWhisper(audioBuffer);
+          break;
+        case 'xfyun':
+          result = await this.recognizeWithXfyun(audioBuffer);
+          break;
+        case 'baidu':
+          result = await this.recognizeWithBaidu(audioBuffer);
+          break;
+        case 'custom':
+          result = await this.recognizeWithCustom(audioBuffer);
+          break;
+        default:
+          console.error('[VoiceManager] 未知的 STT 引擎:', this.config.sttEngine);
+      }
+
+      console.log('[VoiceManager] 识别结果:', result);
+      return result;
+    } catch (e: any) {
+      console.error('[VoiceManager] 识别失败:', e);
+      return 'ERROR:' + (e.message || '未知错误');
+    }
+  }
+
+  // Whisper 离线识别
+  private async recognizeWithWhisper(audioBuffer: Buffer): Promise<string> {
+    try {
+      // 尝试使用 whisper-node（Node.js 封装）
+      const whisper = require('whisper-node');
+      const result = await whisper.transcribe(audioBuffer);
+      return result.text || '';
+    } catch (e) {
+      console.warn('[VoiceManager] whisper-node 不可用，尝试 whisper.cpp');
+
+      // 如果 whisper-node 不可用，尝试使用命令行调用 whisper.cpp
+      try {
+        return await this.recognizeWithWhisperCpp(audioBuffer);
+      } catch (e2: any) {
+        console.error('[VoiceManager] Whisper 识别失败:', e2.message || e2);
+        return 'ERROR:Whisper-' + (e2.message || String(e2));
+      }
+    }
+  }
+
+  // 使用 whisper.cpp 进行识别
+  private async recognizeWithWhisperCpp(audioBuffer: Buffer): Promise<string> {
+    const fs = require('fs');
+    const os = require('os');
+    const { execSync } = require('child_process');
+
+    // 使用配置的 whisper 路径
+    // app.getAppPath() 可能返回项目目录或 dist-electron，需要判断
+    let appPath = app.getAppPath();
+    // 如果在 dist-electron 目录，向上两级
+    if (appPath.endsWith('dist-electron')) {
+      appPath = path.join(appPath, '..', '..');
+    }
+    const defaultWhisperPath = path.join(appPath, 'src', 'whisper-bin-x64', 'Release', 'whisper-cli.exe');
+    const whisperExe = this.config.whisperPath || defaultWhisperPath;
+    const whisperDir = path.dirname(whisperExe) || '.';
+    const modelPath = path.join(whisperDir, 'models', 'ggml-base.bin');
+
+    console.log('[VoiceManager] App路径:', appPath);
+    console.log('[VoiceManager] Whisper 路径:', whisperExe);
+    console.log('[VoiceManager] 模型路径:', modelPath);
+    console.log('[VoiceManager] 可执行文件存在:', fs.existsSync(whisperExe));
+    console.log('[VoiceManager] 模型文件存在:', fs.existsSync(modelPath));
+
+    // 保存临时音频文件 - 使用 webm 扩展名
+    const tempDir = os.tmpdir();
+    const tempAudioPath = path.join(tempDir, `claude_voice_${Date.now()}.webm`);
+
+    try {
+      fs.writeFileSync(tempAudioPath, audioBuffer);
+      console.log('[VoiceManager] 音频文件已保存:', tempAudioPath, '大小:', audioBuffer.length);
+      console.log('[VoiceManager] 音频文件头:', audioBuffer.slice(0, 20).toString('hex').substring(0, 40));
+
+      // 调用 whisper-cli.exe，2>&1 会合并 stderr 到 stdout，我们只需要 stdout
+      const cmd = `"${whisperExe}" -m "${modelPath}" -f "${tempAudioPath}" -l zh --no-timestamps`;
+      console.log('[VoiceManager] 执行命令:', cmd);
+
+      const output = execSync(cmd, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 30000,
+        encoding: 'utf-8',
+      });
+      console.log('[VoiceManager] whisper 原始输出:', output);
+
+      // 过滤噪声，只保留实际转录文本
+      const filtered = this.filterWhisperOutput(output);
+      if (filtered) {
+        return filtered;
+      }
+      return ''; // 无有效输出返回空字符串
+    } catch (e: any) {
+      // 即使出错，也可能捕获到部分输出
+      if (e.stdout) {
+        const filtered = this.filterWhisperOutput(e.stdout);
+        if (filtered) return filtered;
+      }
+      console.error('[VoiceManager] whisper 调用失败:', e.message);
+      return ''; // 出错时返回空字符串，不返回错误信息
+    } finally {
+      // 清理临时文件
+      try {
+        if (fs.existsSync(tempAudioPath)) fs.unlinkSync(tempAudioPath);
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  // 过滤 whisper-cli 输出的技术噪声
+  private filterWhisperOutput(rawOutput: string): string {
+    if (!rawOutput || !rawOutput.trim()) return '';
+
+    const lines = rawOutput.trim().split('\n');
+    const noisePatterns = [
+      /whisper/i,
+      /ggml/i,
+      /system_info/i,
+      /loading/i,
+      /processing/i,
+      /initial/i,
+      /cuda/i,
+      /opencl/i,
+      /metal/i,
+      /blas/i,
+      /coreml/i,
+      /backend/i,
+      /vocab/i,
+      /buffer/i,
+      /encode/i,
+      /decode/i,
+      /error:/i,
+      /^$/,
+    ];
+
+    const meaningfulLines = lines.filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      return !noisePatterns.some((pattern) => pattern.test(trimmed));
+    });
+
+    if (meaningfulLines.length === 0) return '';
+
+    // 清理时间戳格式 [00:00:00.000 --> 00:00:05.000]
+    const cleanLines = meaningfulLines.map((line) =>
+      line.replace(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}\]\s*/, '').trim()
+    ).filter(Boolean);
+
+    return cleanLines.join(' ');
+  }
+
+  // 讯飞语音识别
+  private async recognizeWithXfyun(audioBuffer: Buffer): Promise<string> {
+    const crypto = require('crypto');
+    const https = require('https');
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+
+    if (!this.config.sttAppId || !this.config.sttApiKey) {
+      console.error('[VoiceManager] 讯飞识别需要配置 AppID 和 API Key');
+      return '';
+    }
+
+    const host = 'iat-api.xfyun.cn';
+    const path2 = '/v2/iat';
+    const algorithm = 'hmac-sha256';
+    const headers = `host: ${host}\ndate: ${new Date().toUTCString()}\nPOST ${path2} HTTP/1.1`;
+    const signatureSha = crypto.createHmac(algorithm, this.config.sttApiKey).update(headers).digest('base64');
+    const authorizationOrigin = `api_key="${this.config.sttApiKey}", algorithm="${algorithm}", headers="host date request-line", signature="${signatureSha}"`;
+    const authorization = Buffer.from(authorizationOrigin).toString('base64');
+
+    return new Promise((resolve, reject) => {
+      const options = {
+        hostname: host,
+        port: 443,
+        path: path2,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authorization,
+          'Host': host,
+          'Date': new Date().toUTCString(),
+          'Path': path2,
+        },
+      };
+
+      const req = https.request(options, (res: any) => {
+        let data = '';
+        res.on('data', (chunk: any) => data += chunk);
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            if (result.code === 0 && result.data && result.data.result) {
+              let text = '';
+              for (const ws of result.data.result.ws) {
+                for (const cw of ws.cw) {
+                  text += cw.w;
+                }
+              }
+              resolve(text);
+            } else {
+              console.error('[VoiceManager] 讯飞识别失败:', result);
+              resolve('');
+            }
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+
+      req.on('error', reject);
+
+      // 构建讯飞请求体
+      const requestBody = {
+        common: { app_id: this.config.sttAppId },
+        business: {
+          language: 'zh_cn',
+          domain: 'iat',
+          accent: 'mandarin',
+          sample_rate: 16000,
+          format: 'wav',
+          codec: 'raw',
+        },
+        data: {
+          status: 2,
+          format: 'audio/wav;codecs=opus',
+          audio: audioBuffer.toString('base64'),
+        },
+      };
+
+      req.write(JSON.stringify(requestBody));
+      req.end();
+    });
+  }
+
+  // 百度语音识别
+  private async recognizeWithBaidu(audioBuffer: Buffer): Promise<string> {
+    const crypto = require('crypto');
+    const https = require('https');
+
+    if (!this.config.sttApiKey || !this.config.sttApiSecret) {
+      console.error('[VoiceManager] 百度识别需要配置 API Key 和 Secret');
+      return '';
+    }
+
+    // 先获取 access_token
+    const tokenHost = 'aip.baidubce.com';
+    const tokenPath = `/oauth/2.0/token?grant_type=client_credentials&client_id=${this.config.sttApiKey}&client_secret=${this.config.sttApiSecret}`;
+
+    const tokenResponse = await new Promise<string>((resolve, reject) => {
+      const options = {
+        hostname: tokenHost,
+        port: 443,
+        path: tokenPath,
+        method: 'GET',
+      };
+
+      const req = https.request(options, (res: any) => {
+        let data = '';
+        res.on('data', (chunk: any) => data += chunk);
+        res.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+
+    let accessToken = '';
+    try {
+      const tokenResult = JSON.parse(tokenResponse);
+      accessToken = tokenResult.access_token;
+    } catch (e) {
+      console.error('[VoiceManager] 获取百度 token 失败:', tokenResponse);
+      return '';
+    }
+
+    // 调用识别 API
+    return new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'vop.baidu.com',
+        port: 443,
+        path: `/server_api?dev_pid=1537&cuid=claude_code&token=${accessToken}`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      };
+
+      const req = https.request(options, (res: any) => {
+        let data = '';
+        res.on('data', (chunk: any) => data += chunk);
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            if (result.err_no === 0 && result.result) {
+              resolve(result.result[0]);
+            } else {
+              console.error('[VoiceManager] 百度识别失败:', result);
+              resolve('');
+            }
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+
+      req.on('error', reject);
+
+      const requestBody = {
+        format: 'wav',
+        rate: 16000,
+        channel: 1,
+        speech: audioBuffer.toString('base64'),
+        len: audioBuffer.length,
+      };
+
+      req.write(JSON.stringify(requestBody));
+      req.end();
+    });
+  }
+
+  // 自定义 API 识别
+  private async recognizeWithCustom(audioBuffer: Buffer): Promise<string> {
+    const apiUrl = this.config.sttApiKey; // 使用 sttApiKey 存储 API 地址
+    const apiKey = this.config.sttApiSecret; // 使用 sttApiSecret 存储 API Key
+
+    if (!apiUrl || !apiKey) {
+      console.error('[VoiceManager] 自定义 API 未配置');
+      return '';
+    }
+
+    try {
+      const https = require('https');
+      const url = new URL(apiUrl);
+
+      const options = {
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+      };
+
+      return new Promise((resolve, reject) => {
+        const req = https.request(options, (res: any) => {
+          let data = '';
+          res.on('data', (chunk: any) => data += chunk);
+          res.on('end', () => {
+            try {
+              const result = JSON.parse(data);
+              // 尝���通用解析
+              if (result.text) {
+                resolve(result.text);
+              } else if (result.result) {
+                resolve(result.result);
+              } else if (result.data && result.data.text) {
+                resolve(result.data.text);
+              } else {
+                resolve(data); // 返回原始数据
+              }
+            } catch (e) {
+              resolve(data); // 返回原始数据
+            }
+          });
+        });
+
+        req.on('error', reject);
+
+        // 发送音频数据
+        const requestBody = {
+          audio: audioBuffer.toString('base64'),
+          format: 'wav',
+          rate: 16000,
+        };
+
+        req.write(JSON.stringify(requestBody));
+        req.end();
+      });
+    } catch (e) {
+      console.error('[VoiceManager] 自定义 API 调用失败:', e);
+      return '';
+    }
   }
 }
 

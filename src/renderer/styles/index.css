@@ -82,3 +82,41 @@
 [data-remote-create-disabled="true"] .quick-create-btn {
   display: none !important;
 }
+
+/* 语音助手面板动画 */
+@keyframes pulseGreen {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.4); }
+  50% { box-shadow: 0 0 8px 2px rgba(63, 185, 80, 0.15); }
+}
+
+.pulse-green {
+  animation: pulseGreen 1.5s ease-in-out infinite;
+}
+
+@keyframes pulseBlue {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.4); }
+  50% { box-shadow: 0 0 8px 2px rgba(88, 166, 255, 0.15); }
+}
+
+.pulse-blue {
+  animation: pulseBlue 1.5s ease-in-out infinite;
+}
+
+@keyframes thinkingDots {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+.thinking-dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin: 0 2px;
+  border-radius: 50%;
+  background-color: currentColor;
+  animation: thinkingDots 1.4s infinite ease-in-out both;
+}
+
+.thinking-dot:nth-child(1) { animation-delay: -0.32s; }
+.thinking-dot:nth-child(2) { animation-delay: -0.16s; }
+.thinking-dot:nth-child(3) { animation-delay: 0s; }

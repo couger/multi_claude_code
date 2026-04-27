@@ -111,6 +111,18 @@ export interface SessionMetrics {
   timestamp: number;
 }
 
+/** 会话模板 */
+export interface SessionTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  workDir: string;
+  args: string;
+  useCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** 分组信息 */
 export interface GroupInfo {
   id: string;

@@ -7,6 +7,8 @@ import AlertManager from './components/AlertManager';
 import CreateSessionDialog from './components/CreateSessionDialog';
 import SettingsPanel from './components/SettingsPanel';
 import { SessionStatus } from '../shared/constants';
+import { whisperService } from './services/WhisperService';
+import { useVoiceAssistantStore } from './stores/voiceAssistantStore';
 
 interface GeneralSettings {
   showGroupPanel: boolean;
@@ -37,6 +39,20 @@ const App: React.FC = () => {
 
   // 防止 StrictMode 双重执行
   const listenersInitialized = useRef(false);
+
+  // 自动加载已保存的 Whisper WASM 模型
+  useEffect(() => {
+    const savedModelId = localStorage.getItem('whisperWasm.modelId');
+    if (savedModelId) {
+      whisperService.checkSupport().then(supported => {
+        if (supported) {
+          whisperService.loadModel(savedModelId as any);
+        }
+      });
+    }
+    // 加载语音助手消息历史
+    useVoiceAssistantStore.getState().loadFromStorage();
+  }, []);
 
   // 通用设置状态
   const [generalSettings, setGeneralSettings] = useState<GeneralSettings>(() => {

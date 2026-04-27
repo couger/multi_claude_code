@@ -24,6 +24,14 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
   const escConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const escConfirmRef = useRef<HTMLDivElement>(null);
 
+  // 搜索状态
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isRegex, setIsRegex] = useState(false);
+  const [matches, setMatches] = useState<number[]>([]);
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
+  const decorationRefs = useRef<any[]>([]);
+
   // Output is now written directly to xterm via IPC listener, not through Zustand store
   // This avoids creating thousands of Map copies and React re-renders on every PTY chunk
 
@@ -271,6 +279,98 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
     setIsEditingNote(false);
   };
 
+  // 执行搜索
+  const performSearch = useCallback(() => {
+    if (!xtermRef.current || !searchTerm) {
+      setMatches([]);
+      setCurrentMatchIndex(-1);
+      return;
+    }
+
+    try {
+      const buffer = xtermRef.current.buffer.active;
+      const lines: string[] = [];
+      for (let i = 0; i < buffer.length; i++) {
+        lines.push(buffer.getLine(i)?.translateToString() || '');
+      }
+      const fullText = lines.join('\n');
+
+      const regex = isRegex
+        ? new RegExp(searchTerm, 'gi')
+        : new RegExp(searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+
+      const found: number[] = [];
+      let match;
+      while ((match = regex.exec(fullText)) !== null) {
+        found.push(match.index);
+      }
+
+      setMatches(found);
+      setCurrentMatchIndex(found.length > 0 ? 0 : -1);
+    } catch (e) {
+      setMatches([]);
+      setCurrentMatchIndex(-1);
+    }
+  }, [searchTerm, isRegex]);
+
+  // 搜索输入变化
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+    setTimeout(performSearch, 0);
+  };
+
+  // 切换正则模式
+  const toggleRegex = () => {
+    setIsRegex(!isRegex);
+    setTimeout(performSearch, 0);
+  };
+
+  // 上一条匹配
+  const prevMatch = () => {
+    if (matches.length === 0) return;
+    setCurrentMatchIndex((prev) => (prev <= 0 ? matches.length - 1 : prev - 1));
+  };
+
+  // 下一条匹配
+  const nextMatch = () => {
+    if (matches.length === 0) return;
+    setCurrentMatchIndex((prev) => (prev >= matches.length - 1 ? 0 : prev + 1));
+  };
+
+  // 关闭搜索
+  const closeSearch = () => {
+    setIsSearchOpen(false);
+    setSearchTerm('');
+    setMatches([]);
+    setCurrentMatchIndex(-1);
+  };
+
+  // 搜索快捷键
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        setIsSearchOpen(true);
+      }
+      if (e.key === 'Escape' && isSearchOpen) {
+        e.preventDefault();
+        closeSearch();
+      }
+      if (isSearchOpen && !showEscConfirm) {
+        if (e.key === 'Enter' && e.shiftKey) {
+          e.preventDefault();
+          prevMatch();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          nextMatch();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSearchOpen, showEscConfirm, matches.length]);
+
   return (
     <div className="flex-1 flex flex-col bg-dark-900 fade-in">
       {/* 头部工具栏 */}
@@ -355,6 +455,19 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
             </svg>
           </button>
 
+          {/* 搜索按钮 */}
+          <button
+            onClick={() => setIsSearchOpen(true)}
+            className={`p-1.5 rounded transition-colors ${
+              isSearchOpen ? 'bg-accent-primary text-dark-900' : 'hover:bg-dark-700'
+            }`}
+            title="搜索 (Ctrl+F)"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </button>
+
           {/* 关闭按钮 */}
           <button
             onClick={() => onClose(session.id)}
@@ -398,6 +511,57 @@ const ExpandedView: React.FC<ExpandedViewProps> = ({ session, onClose, onCollaps
               保存
             </button>
           </div>
+        </div>
+      )}
+
+      {/* 搜索栏 */}
+      {isSearchOpen && (
+        <div className="p-2 bg-dark-800 border-b border-dark-700 flex items-center gap-2">
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="搜索终端输出..."
+            className="flex-1 bg-dark-700 border border-dark-600 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent-primary"
+            autoFocus
+          />
+          <button
+            onClick={toggleRegex}
+            className={`px-2 py-1 rounded text-xs font-mono ${
+              isRegex ? 'bg-accent-primary text-dark-900' : 'bg-dark-700 text-dark-300 hover:bg-dark-600'
+            }`}
+            title="正则表达式模式"
+          >
+            .*
+          </button>
+          <div className="flex items-center gap-1 text-xs text-dark-400 min-w-[80px]">
+            {matches.length > 0 ? (
+              <>
+                <button onClick={prevMatch} className="p-1 hover:bg-dark-700 rounded" title="上一�� (Shift+Enter)">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                  </svg>
+                </button>
+                <span className="px-1">{currentMatchIndex + 1}/{matches.length}</span>
+                <button onClick={nextMatch} className="p-1 hover:bg-dark-700 rounded" title="下一个 (Enter)">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </>
+            ) : (
+              <span className="px-1">{searchTerm ? '无匹配' : '输入搜索'}</span>
+            )}
+          </div>
+          <button
+            onClick={closeSearch}
+            className="p-1.5 hover:bg-dark-700 rounded transition-colors"
+            title="关闭搜索 (Esc)"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       )}
 
