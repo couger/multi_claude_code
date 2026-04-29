@@ -70,6 +70,41 @@ class WhisperService {
     }
   }
 
+  /**
+   * 从本地文件加载模型（手动下载方式）
+   * 用户可先手动下载 .bin 文件，再通过此方法加载
+   */
+  async loadModelFromFile(data: Uint8Array, modelId: string): Promise<boolean> {
+    if (this.state.loading) return false;
+
+    this.setState({ loading: true, loadingProgress: 0, error: null });
+
+    try {
+      const { WhisperWasmService } = await this.ensureModule();
+      if (!this.whisper) {
+        this.whisper = new WhisperWasmService({ logLevel: 1 });
+      }
+
+      await this.whisper.initModel(data);
+
+      localStorage.setItem('whisperWasm.modelId', modelId);
+      this.setState({
+        loading: false,
+        loadingProgress: 100,
+        modelLoaded: true,
+        currentModel: modelId,
+        crashed: false,
+      });
+      return true;
+    } catch (e: any) {
+      this.setState({
+        loading: false,
+        error: e?.message || String(e),
+      });
+      return false;
+    }
+  }
+
   async loadModel(modelId: string): Promise<boolean> {
     if (this.state.loading) return false;
 
@@ -193,7 +228,6 @@ class WhisperService {
     } catch (e) {
       console.error('[WhisperService] Transcription failed:', e);
       this.setState({ crashed: true });
-      this.unloadModel();
       return null;
     } finally {
       if (audioContext) {

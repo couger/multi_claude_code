@@ -2128,8 +2128,9 @@ const WHISPER_MODELS = [
 const WhisperWasmConfig: React.FC<WhisperWasmConfigProps> = ({
   useWasm, whisperPath, modelId, onUseWasmChange, onWhisperPathChange, onModelIdChange,
 }) => {
-  const { state: wsState, checkSupport, loadModel, clearCache, isModelCached } = useWhisperService();
+  const { state: wsState, checkSupport, loadModel, loadModelFromFile, clearCache, isModelCached } = useWhisperService();
   const [cachedModels, setCachedModels] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     checkSupport();
@@ -2205,26 +2206,30 @@ const WhisperWasmConfig: React.FC<WhisperWasmConfigProps> = ({
           <div className="flex items-center gap-2">
             <button
               onClick={() => loadModel(modelId as any)}
-              disabled={wsState.loading || isCurrentModelLoaded}
+              disabled={wsState.loading || (isCurrentModelLoaded && !wsState.crashed)}
               className={`px-3 py-1.5 rounded text-xs transition-colors ${
                 wsState.loading
                   ? 'bg-dark-600 text-dark-400 cursor-not-allowed'
-                  : isCurrentModelLoaded
-                    ? 'bg-green-700 text-white cursor-not-allowed'
-                    : isCurrentModelCached
-                      ? 'bg-blue-700 text-white hover:bg-blue-600'
-                      : 'bg-accent-primary text-white hover:opacity-90'
+                  : wsState.crashed
+                    ? 'bg-amber-700 text-white hover:bg-amber-600'
+                    : isCurrentModelLoaded
+                      ? 'bg-green-700 text-white cursor-not-allowed'
+                      : isCurrentModelCached
+                        ? 'bg-blue-700 text-white hover:bg-blue-600'
+                        : 'bg-accent-primary text-white hover:opacity-90'
               }`}
             >
               {wsState.loading
                 ? `下载中 ${wsState.loadingProgress}%`
-                : isCurrentModelLoaded
-                  ? '已加载'
-                  : isCurrentModelCached
-                    ? '加载已缓存模型'
-                    : '下载模型'}
+                : wsState.crashed
+                  ? '重新加载模型'
+                  : isCurrentModelLoaded
+                    ? '已加载'
+                    : isCurrentModelCached
+                      ? '加载已缓存模型'
+                      : '下载模型'}
             </button>
-            {isCurrentModelLoaded && wsState.currentModel && (
+            {!wsState.crashed && isCurrentModelLoaded && wsState.currentModel && (
               <span className="text-xs text-green-400">
                 {WHISPER_MODELS.find(m => m.id === wsState.currentModel)?.label || wsState.currentModel} 已就绪
               </span>
@@ -2234,6 +2239,53 @@ const WhisperWasmConfig: React.FC<WhisperWasmConfigProps> = ({
                 模型已缓存，点击加载
               </span>
             )}
+          </div>
+
+          {/* 手动从本地文件加载 */}
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".bin,.ggml"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                try {
+                  const buffer = await file.arrayBuffer();
+                  await loadModelFromFile(new Uint8Array(buffer), modelId);
+                } catch (err: any) {
+                  console.error('[WhisperWasmConfig] 手动加载模型失败:', err);
+                }
+                // 重置 input，允许重复选择同一文件
+                if (fileInputRef.current) fileInputRef.current.value = '';
+              }}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={wsState.loading}
+              className="px-3 py-1.5 rounded text-xs bg-dark-700 text-dark-300 hover:bg-dark-600 hover:text-dark-100 transition-colors disabled:opacity-50"
+            >
+              从文件手动加载...
+            </button>
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                const model = WHISPER_MODELS.find(m => m.id === modelId);
+                if (model) {
+                  const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${modelId}.bin`;
+                  if (window.electronAPI?.openExternal) {
+                    window.electronAPI.openExternal(url);
+                  } else {
+                    window.open(url, '_blank');
+                  }
+                }
+              }}
+              className="text-xs text-accent-primary/70 hover:text-accent-primary underline"
+            >
+              下载 {WHISPER_MODELS.find(m => m.id === modelId)?.label || modelId}
+            </a>
           </div>
 
           {/* 进度条 */}
@@ -2399,16 +2451,24 @@ const VoiceTab: React.FC<VoiceTabProps> = ({ aiEnabled }) => {
 
     if (testing === 'listen') {
       // 停止录音
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
+      try {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      } catch (stopErr: any) {
+        console.error('[VoiceTab] 停止 MediaRecorder 失败:', stopErr);
       }
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+        try {
+          streamRef.current.getTracks().forEach(track => track.stop());
+        } catch (trackErr: any) {
+          console.error('[VoiceTab] 停止音频轨道失败:', trackErr);
+        }
         streamRef.current = null;
       }
+      isListeningRef.current = false;
       setTesting('none');
       setIsListening(false);
-      isListeningRef.current = false;
       window.electronAPI?.stopListening?.();
       addDebugLog('停止录音');
       return;

@@ -11,6 +11,7 @@ export function useWhisperService() {
     state,
     checkSupport: useCallback(() => whisperService.checkSupport(), []),
     loadModel: useCallback((id: string) => whisperService.loadModel(id), []),
+    loadModelFromFile: useCallback((data: Uint8Array, modelId: string) => whisperService.loadModelFromFile(data, modelId), []),
     transcribe: useCallback((audio: ArrayBuffer) => whisperService.transcribe(audio), []),
     unloadModel: useCallback(() => whisperService.unloadModel(), []),
     getAvailableModels: useCallback(() => whisperService.getAvailableModels(), []),

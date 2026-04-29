@@ -113,6 +113,9 @@ export interface ElectronAPI {
   templateDelete: (id: string) => Promise<boolean>;
   templateUse: (id: string) => Promise<any | null>;
 
+  // 外部链接
+  openExternal: (url: string) => void;
+
   // 标记 Electron 环境
   isElectron?: boolean;
 }

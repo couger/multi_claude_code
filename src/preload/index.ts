@@ -243,6 +243,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   templateUpdate: (id: string, updates: any) => ipcRenderer.invoke(IPC_CHANNELS.TEMPLATE_UPDATE, { id, updates }),
   templateDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TEMPLATE_DELETE, id),
   templateUse: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TEMPLATE_USE, id),
+
+  // 外部链接
+  openExternal: (url: string) => ipcRenderer.send('shell:openExternal', url),
 });
 
 // 鼠标进入/离开窗口事件

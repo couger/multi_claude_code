@@ -2,7 +2,7 @@
  * Claude Code CLI Manager — 主进程入口（精简版）
  */
 
-import { app, BrowserWindow, ipcMain, screen, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, dialog, shell } from 'electron';
 import path from 'path';
 import os from 'os';
 import { IPC_CHANNELS, APP_CONSTANTS } from './constants';
@@ -247,6 +247,11 @@ function initIPC() {
   });
 
   ipcMain.handle(IPC_CHANNELS.CHECK_EXTERNAL_CLAUDE, async (_: any, workDir: string) => pm.checkExternalClaudeCode(workDir));
+
+  // 在系统浏览器中打开外部链接
+  ipcMain.on('shell:openExternal', async (_event: any, url: string) => {
+    try { await shell.openExternal(url); } catch (e) { console.error('Failed to open external URL:', e); }
+  });
 
   // ---------- 批量操作 ----------
 
