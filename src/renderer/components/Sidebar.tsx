@@ -6,6 +6,7 @@ import SessionCard from './SessionCard';
 import RemoteStatusWidget from './sidebar/RemoteStatusWidget';
 import GroupSection from './sidebar/GroupSection';
 import VoiceAssistantPanel from './sidebar/VoiceAssistantPanel';
+import ErrorBoundary from './ErrorBoundary';
 
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 500;
@@ -419,7 +420,9 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
 
           {/* 语音助手面板 */}
-          <VoiceAssistantPanel />
+          <ErrorBoundary fallback={null}>
+            <VoiceAssistantPanel />
+          </ErrorBoundary>
 
           {/* 分组功能开启时：会话列表 + 分组面板由 GroupSection 管理 */}
           {showGroupFeature ? (

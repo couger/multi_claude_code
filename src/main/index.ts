@@ -22,6 +22,7 @@ import { AIAssistantManager } from './AIAssistantManager';
 import { VoiceManager } from './VoiceManager';
 
 let mainWindow: BrowserWindow | null = null;
+let isRecreatingWindow = false; // 防止重复创建窗口
 let windowManager: WindowManager | null = null;
 let processManager: ProcessManager | null = null;
 let performanceMonitor: PerformanceMonitor | null = null;
@@ -49,6 +50,19 @@ export { app };
 // ==================== 窗口创建 ====================
 
 function createWindow() {
+  // 防止重复创建
+  if (isRecreatingWindow) {
+    console.log('[Main] 窗口正在重建中，跳过');
+    return;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    console.log('[Main] 窗口已存在，跳过创建');
+    return;
+  }
+
+  isRecreatingWindow = true;
+  setTimeout(() => { isRecreatingWindow = false; }, 3000);
+
   // 获取半透明设置
   const savedOpacity = (configManager.get('windowOpacity') as number) ?? 1.0;
 
@@ -99,6 +113,41 @@ function createWindow() {
   }
 
   mainWindow.on('closed', () => { mainWindow = null; });
+
+  // 监听渲染进程崩溃 - 自动恢复一次，避免循环
+  let crashRecoveryCount = 0;
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('[Main] 渲染进程崩溃:', details.reason);
+    if (crashRecoveryCount < 2 && mainWindow && !mainWindow.isDestroyed()) {
+      crashRecoveryCount++;
+      console.log(`[Main] 尝试恢复 (${crashRecoveryCount}/2)...`);
+      // 清除 WASM 状态，避免再次触发崩溃
+      mainWindow.webContents.session.clearCache().catch(() => {});
+      // 重新加载页面
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          const devServerUrl = process.env.VITE_DEV_SERVER_URL || `http://localhost:${APP_CONSTANTS.VITE_DEV_PORT}`;
+          if (process.env.NODE_ENV === 'development' || process.env.VITE_DEV_SERVER_URL) {
+            mainWindow.loadURL(devServerUrl);
+          } else {
+            mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+          }
+        }
+      }, 1000);
+    } else {
+      console.error('[Main] 已达到最大恢复次数，请手动重启应用');
+    }
+  });
+
+  // 成功加载后重置崩溃计数
+  mainWindow.webContents.on('did-finish-load', () => {
+    crashRecoveryCount = 0;
+  });
+
+  // 监听未响应崩溃
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('[Main] 页面加载失败:', errorCode, errorDescription);
+  });
 
   mainWindow.once('ready-to-show', () => {
     ensureWindowVisible(mainWindow!, windowManager ?? undefined);

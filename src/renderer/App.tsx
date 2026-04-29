@@ -9,6 +9,7 @@ import SettingsPanel from './components/SettingsPanel';
 import { SessionStatus } from '../shared/constants';
 import { whisperService } from './services/WhisperService';
 import { useVoiceAssistantStore } from './stores/voiceAssistantStore';
+import ErrorBoundary from './components/ErrorBoundary';
 
 interface GeneralSettings {
   showGroupPanel: boolean;
@@ -40,18 +41,28 @@ const App: React.FC = () => {
   // 防止 StrictMode 双重执行
   const listenersInitialized = useRef(false);
 
-  // 自动加载已保存的 Whisper WASM 模型
+  // 自动加载已保存的 Whisper WASM 模型（仅在设置中启用 WASM 时加载）
   useEffect(() => {
-    const savedModelId = localStorage.getItem('whisperWasm.modelId');
-    if (savedModelId) {
-      whisperService.checkSupport().then(supported => {
-        if (supported) {
-          whisperService.loadModel(savedModelId as any);
-        }
-      });
+    try {
+      const savedModelId = localStorage.getItem('whisperWasm.modelId');
+      if (savedModelId) {
+        whisperService.checkSupport().then(supported => {
+          if (supported) {
+            whisperService.loadModel(savedModelId as any).catch(() => {
+              // 加载失败时清除已保存的模型 ID，避免下次继续尝试
+              localStorage.removeItem('whisperWasm.modelId');
+            });
+          }
+        }).catch(() => { /* WASM 支持检查失败，静默降级 */ });
+      }
+    } catch {
+      // 如果 WASM 模块加载失败，清除相关状态
+      localStorage.removeItem('whisperWasm.modelId');
     }
     // 加载语音助手消息历史
-    useVoiceAssistantStore.getState().loadFromStorage();
+    try {
+      useVoiceAssistantStore.getState().loadFromStorage();
+    } catch { /* ignore */ }
   }, []);
 
   // 通用设置状态
@@ -240,6 +251,7 @@ const App: React.FC = () => {
   );
 
   return (
+    <ErrorBoundary>
     <div className="h-screen flex flex-col bg-dark-900 text-dark-100 overflow-hidden">
       {/* 标题栏 */}
       <TitleBar />
@@ -318,6 +330,7 @@ const App: React.FC = () => {
         />
       )}
   </div>
+    </ErrorBoundary>
   );
 };
 

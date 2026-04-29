@@ -331,31 +331,107 @@ class VoiceManager {
     console.log('[VoiceManager] 可执行文件存在:', fs.existsSync(whisperExe));
     console.log('[VoiceManager] 模型文件存在:', fs.existsSync(modelPath));
 
-    // 保存临时音频文件 - 使用 webm 扩展名
     const tempDir = os.tmpdir();
     const tempAudioPath = path.join(tempDir, `claude_voice_${Date.now()}.webm`);
+    let wavPath = tempAudioPath;
+
+    // 检测音频格式 - webm 文件头是 1a45dfa3
+    const audioHeader = audioBuffer.slice(0, 4);
+    const headerHex = audioHeader.toString('hex');
+    const isWebM = headerHex === '1a45dfa3' || headerHex.startsWith('1a45df');
+    console.log('[VoiceManager] 音频文件头:', headerHex);
+    console.log('[VoiceManager] 检测到音频格式:', isWebM ? 'webm' : 'unknown');
 
     try {
       fs.writeFileSync(tempAudioPath, audioBuffer);
       console.log('[VoiceManager] 音频文件已保存:', tempAudioPath, '大小:', audioBuffer.length);
       console.log('[VoiceManager] 音频文件头:', audioBuffer.slice(0, 20).toString('hex').substring(0, 40));
 
-      // 调用 whisper-cli.exe，2>&1 会合并 stderr 到 stdout，我们只需要 stdout
-      const cmd = `"${whisperExe}" -m "${modelPath}" -f "${tempAudioPath}" -l zh --no-timestamps`;
+      // 如果是 webm 格式，尝试转换为 wav
+      if (isWebM) {
+        const tempWavPath = path.join(tempDir, `claude_voice_${Date.now()}.wav`);
+        
+        // 检查 ffmpeg 是否可用
+        let ffmpegPath = 'ffmpeg';
+        try {
+          execSync('ffmpeg -version', { stdio: 'ignore' });
+        } catch {
+          console.warn('[VoiceManager] ffmpeg 不可用，尝试直接使用 webm');
+          // 没有 ffmpeg，尝试直接用 webm（可能某些版本的 whisper 支持）
+        }
+
+        if (fs.existsSync(tempWavPath)) {
+          try { fs.unlinkSync(tempWavPath); } catch { /* ignore */ }
+        }
+
+        try {
+          // 使用 ffmpeg 将 webm 转换为 wav
+          const convertCmd = `ffmpeg -y -i "${tempAudioPath}" -ar 16000 -ac 1 -acodec pcm_s16le "${tempWavPath}"`;
+          console.log('[VoiceManager] 转换命令:', convertCmd);
+          execSync(convertCmd, { stdio: 'ignore', timeout: 30000 });
+          
+          if (fs.existsSync(tempWavPath) && fs.statSync(tempWavPath).size > 0) {
+            wavPath = tempWavPath;
+            console.log('[VoiceManager] 音频转换成功:', wavPath);
+          } else {
+            console.warn('[VoiceManager] 转换后的文件不存在或为空');
+          }
+        } catch (convertError: any) {
+          console.error('[VoiceManager] 音频转换失败:', convertError.message);
+          // 转换失败，继续尝试使用原始文件
+        }
+      }
+
+      // 调用 whisper-cli.exe，设置 UTF-8 编码以支持中文
+      const cmd = `chcp 65001 >nul && "${whisperExe}" -m "${modelPath}" -f "${wavPath}" -l zh --no-timestamps`;
       console.log('[VoiceManager] 执行命令:', cmd);
 
-      const output = execSync(cmd, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 30000,
-        encoding: 'utf-8',
-      });
-      console.log('[VoiceManager] whisper 原始输出:', output);
+      let output = '';
+      try {
+        output = execSync(cmd, {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 30000,
+          encoding: 'utf-8',
+          windowsHide: true,
+        });
+      } catch (execError: any) {
+        // 如果执行失败，检查是否有 stderr 输出
+        if (execError.stderr) {
+          console.error('[VoiceManager] whisper stderr:', execError.stderr);
+        }
+        // 尝试捕获 stdout（即使有错误也可能返回部分结果）
+        output = execError.stdout || '';
+        console.error('[VoiceManager] whisper 执行错误:', execError.message);
+      }
+      
+      console.log('[VoiceManager] whisper 原始输出(hex):', Buffer.from(output).toString('hex').substring(0, 100));
+      console.log('[VoiceManager] whisper 原始输出(utf8):', output);
 
       // 过滤噪声，只保留实际转录文本
       const filtered = this.filterWhisperOutput(output);
       if (filtered) {
         return filtered;
       }
+      
+      // 如果输出为空，尝试其他方法
+      if (!output || !output.trim()) {
+        console.warn('[VoiceManager] whisper 无输出，可能格式不支持');
+        // 尝试添加 --verbose 参数获取更多信息
+        try {
+          const verboseCmd = `"${whisperExe}" -m "${modelPath}" -f "${wavPath}" -l zh --no-timestamps --verbose`;
+          const verboseOutput = execSync(verboseCmd, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            timeout: 30000,
+            encoding: 'utf-8',
+          });
+          console.log('[VoiceManager] whisper verbose 输出:', verboseOutput);
+          const filteredVerbose = this.filterWhisperOutput(verboseOutput);
+          if (filteredVerbose) {
+            return filteredVerbose;
+          }
+        } catch { /* ignore */ }
+      }
+      
       return ''; // 无有效输出返回空字符串
     } catch (e: any) {
       // 即使出错，也可能捕获到部分输出
@@ -369,6 +445,7 @@ class VoiceManager {
       // 清理临时文件
       try {
         if (fs.existsSync(tempAudioPath)) fs.unlinkSync(tempAudioPath);
+        if (wavPath !== tempAudioPath && fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
       } catch (e) { /* ignore */ }
     }
   }
@@ -376,6 +453,19 @@ class VoiceManager {
   // 过滤 whisper-cli 输出的技术噪声
   private filterWhisperOutput(rawOutput: string): string {
     if (!rawOutput || !rawOutput.trim()) return '';
+
+    // 先检查是否包含中文字符，如果有中文直接返回原始输出
+    const hasChinese = /[\u4e00-\u9fa5]/.test(rawOutput);
+    if (hasChinese) {
+      // 清理时间戳格式，保留中文内容
+      const cleanText = rawOutput
+        .replace(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}\]\s*/gm, '')
+        .replace(/^\s+|\s+$/g, '');
+      if (cleanText) {
+        console.log('[VoiceManager] 检测到中文识别结果:', cleanText);
+        return cleanText;
+      }
+    }
 
     const lines = rawOutput.trim().split('\n');
     const noisePatterns = [

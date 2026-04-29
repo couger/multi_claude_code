@@ -841,7 +841,16 @@ const AITab: React.FC = () => {
           <div className="text-xs text-dark-500">允许AI辅助管理会话</div>
         </div>
         <button
-          onClick={() => setConfig({ ...config, enabled: !config.enabled })}
+          onClick={async () => {
+            const newEnabled = !config.enabled;
+            setConfig({ ...config, enabled: newEnabled });
+            // 同时更新主进程配置
+            try {
+              await window.electronAPI?.updateAIConfig?.({ enabled: newEnabled });
+            } catch (e) {
+              console.error('更新AI配置失败:', e);
+            }
+          }}
           className={`relative w-10 h-5 rounded-full transition-colors ${
             config.enabled ? 'bg-accent-primary' : 'bg-dark-600'
           }`}
@@ -2119,11 +2128,32 @@ const WHISPER_MODELS = [
 const WhisperWasmConfig: React.FC<WhisperWasmConfigProps> = ({
   useWasm, whisperPath, modelId, onUseWasmChange, onWhisperPathChange, onModelIdChange,
 }) => {
-  const { state: wsState, checkSupport, loadModel, clearCache } = useWhisperService();
+  const { state: wsState, checkSupport, loadModel, clearCache, isModelCached } = useWhisperService();
+  const [cachedModels, setCachedModels] = useState<string[]>([]);
 
   useEffect(() => {
     checkSupport();
   }, []);
+
+  // 检测模型缓存状态
+  useEffect(() => {
+    const checkCache = async () => {
+      const cached: string[] = [];
+      for (const m of WHISPER_MODELS) {
+        if (await isModelCached(m.id)) {
+          cached.push(m.id);
+        }
+      }
+      setCachedModels(cached);
+    };
+    if (wsState.wasmSupported !== false) {
+      checkCache();
+    }
+  }, [wsState.wasmSupported, wsState.modelLoaded]);
+
+  // 检查当前模型是否已缓存
+  const isCurrentModelCached = cachedModels.includes(modelId);
+  const isCurrentModelLoaded = wsState.modelLoaded && wsState.currentModel === modelId;
 
   return (
     <div className="space-y-2 bg-dark-900 p-2 rounded">
@@ -2175,24 +2205,33 @@ const WhisperWasmConfig: React.FC<WhisperWasmConfigProps> = ({
           <div className="flex items-center gap-2">
             <button
               onClick={() => loadModel(modelId as any)}
-              disabled={wsState.loading}
+              disabled={wsState.loading || isCurrentModelLoaded}
               className={`px-3 py-1.5 rounded text-xs transition-colors ${
                 wsState.loading
                   ? 'bg-dark-600 text-dark-400 cursor-not-allowed'
-                  : wsState.modelLoaded
-                    ? 'bg-green-700 text-white hover:bg-green-600'
-                    : 'bg-accent-primary text-white hover:opacity-90'
+                  : isCurrentModelLoaded
+                    ? 'bg-green-700 text-white cursor-not-allowed'
+                    : isCurrentModelCached
+                      ? 'bg-blue-700 text-white hover:bg-blue-600'
+                      : 'bg-accent-primary text-white hover:opacity-90'
               }`}
             >
               {wsState.loading
                 ? `下载中 ${wsState.loadingProgress}%`
-                : wsState.modelLoaded
-                  ? '已加载（重新下载）'
-                  : '下载模型'}
+                : isCurrentModelLoaded
+                  ? '已加载'
+                  : isCurrentModelCached
+                    ? '加载已缓存模型'
+                    : '下载模型'}
             </button>
-            {wsState.modelLoaded && wsState.currentModel && (
+            {isCurrentModelLoaded && wsState.currentModel && (
               <span className="text-xs text-green-400">
                 {WHISPER_MODELS.find(m => m.id === wsState.currentModel)?.label || wsState.currentModel} 已就绪
+              </span>
+            )}
+            {!isCurrentModelLoaded && isCurrentModelCached && (
+              <span className="text-xs text-blue-400">
+                模型已缓存，点击加载
               </span>
             )}
           </div>
@@ -2286,6 +2325,9 @@ const VoiceTab: React.FC<VoiceTabProps> = ({ aiEnabled }) => {
   const [testing, setTesting] = useState<'none' | 'listen' | 'speak'>('none');
   const [debugLogs, setDebugLogs] = useState<{ time: string; msg: string }[]>([]);
 
+  // Whisper WASM 服务（用于 STT 测试）
+  const { state: wsState, transcribe } = useWhisperService();
+
   // 语音识别引用
   const isListeningRef = useRef(false);
 
@@ -2312,6 +2354,11 @@ const VoiceTab: React.FC<VoiceTabProps> = ({ aiEnabled }) => {
       'baidu': !!(config.sttApiKey && config.sttApiSecret), // 需要配置
     };
 
+    // WASM 崩溃检测
+    if (wsState.crashed) {
+      warnings.push({ type: 'wasm-crashed', message: 'WASM 引擎之前发生崩溃，已自动禁用。重新加载模型可恢复。' });
+    }
+
     // 只添加不满足条件的警告
     if (config.ttsEngine === 'piper' && !ttsAvailable.piper) {
       warnings.push({ type: 'tts-piper', message: 'Piper 未安装，无法使用' });
@@ -2327,7 +2374,7 @@ const VoiceTab: React.FC<VoiceTabProps> = ({ aiEnabled }) => {
     }
 
     setEnvWarnings(warnings);
-  }, [config.ttsEngine, config.sttEngine, config.sttApiKey, config.sttApiSecret, config.sttAppId, config.whisperPath]);
+  }, [config.ttsEngine, config.sttEngine, config.sttApiKey, config.sttApiSecret, config.sttAppId, config.whisperPath, wsState.crashed]);
 
   // 合并 AI 启用状态和语音配置启用状态
   const isEnabled = aiEnabled && config.enabled;
@@ -2403,6 +2450,14 @@ const VoiceTab: React.FC<VoiceTabProps> = ({ aiEnabled }) => {
 
         if (audioChunks.length === 0) {
           addDebugLog('没有音频数据');
+          // 清理资源并重置状态
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
+          }
+          setTesting('none');
+          setIsListening(false);
+          isListeningRef.current = false;
           return;
         }
 
@@ -2412,30 +2467,91 @@ const VoiceTab: React.FC<VoiceTabProps> = ({ aiEnabled }) => {
           const webmBuffer = await audioBlob.arrayBuffer();
           addDebugLog('音频大小: ' + webmBuffer.byteLength + ' bytes');
 
-          // 优先使用 WASM 前端识别
-          const { whisperService } = await import('../services/WhisperService');
-          const wsState = whisperService.getState();
-          if (wsState.modelLoaded) {
-            addDebugLog('使用 WASM 前端识别...');
-            const text = await whisperService.transcribe(webmBuffer);
-            addDebugLog('WASM 识别结果: ' + (text || '(空)'));
-          } else {
-            addDebugLog('发送音频到后端识别...');
+          // 优先使用前端 WASM 识别，模型未加载时回退到后端
+          const useWasmStt = config.whisperUseWasm !== false;
+          if (useWasmStt && wsState.modelLoaded) {
+            addDebugLog('使用前端 WASM 识别...');
+            try {
+              const text = await transcribe(webmBuffer);
+              if (text) {
+                addDebugLog('识别结果: ' + text);
+              } else {
+                addDebugLog('WASM 识别结果为空，回退到后端...');
+                if (window.electronAPI?.recognizeAudio) {
+                  const result = await window.electronAPI.recognizeAudio(webmBuffer);
+                  if (result && !result.startsWith('ERROR:')) {
+                    addDebugLog('识别结果: ' + result);
+                  } else {
+                    addDebugLog('识别结果为空');
+                  }
+                }
+              }
+            } catch (wasmError: any) {
+              addDebugLog('WASM 识别异常: ' + wasmError.message);
+              addDebugLog('回退到后端识别...');
+              if (window.electronAPI?.recognizeAudio) {
+                try {
+                  const result = await window.electronAPI.recognizeAudio(webmBuffer);
+                  if (result && !result.startsWith('ERROR:')) {
+                    addDebugLog('识别结果: ' + result);
+                  } else {
+                    addDebugLog('识别结果为空');
+                  }
+                } catch (beError: any) {
+                  addDebugLog('后端识别也失败: ' + beError.message);
+                }
+              }
+            }
+          } else if (useWasmStt && !wsState.modelLoaded) {
+            addDebugLog('WASM 模型未加载，请先在「语音识别模型」中加载模型');
+            addDebugLog('回退到后端识别...');
             if (window.electronAPI?.recognizeAudio) {
-              const result = await window.electronAPI.recognizeAudio(webmBuffer);
-              addDebugLog('识别结果: ' + (result || '(空)'));
+              try {
+                const result = await window.electronAPI.recognizeAudio(webmBuffer);
+                if (result && !result.startsWith('ERROR:')) {
+                  addDebugLog('识别结果: ' + result);
+                } else if (result && result.startsWith('ERROR:')) {
+                  addDebugLog('识别错误: ' + result.slice(6));
+                } else {
+                  addDebugLog('识别结果为空');
+                }
+              } catch (beError: any) {
+                addDebugLog('后端识别异常: ' + beError.message);
+              }
             } else {
-              addDebugLog('错误: recognizeAudio API 不可用');
+              addDebugLog('错误: 识别 API 不可用');
+            }
+          } else {
+            addDebugLog('使用后端识别...');
+            if (window.electronAPI?.recognizeAudio) {
+              try {
+                const result = await window.electronAPI.recognizeAudio(webmBuffer);
+                if (result && !result.startsWith('ERROR:')) {
+                  addDebugLog('识别结果: ' + result);
+                } else if (result && result.startsWith('ERROR:')) {
+                  addDebugLog('识别错误: ' + result.slice(6));
+                } else {
+                  addDebugLog('识别结果为空');
+                }
+              } catch (beError: any) {
+                addDebugLog('后端识别异常: ' + beError.message);
+              }
+            } else {
+              addDebugLog('错误: 识别 API 不可用');
             }
           }
         } catch (e: any) {
           addDebugLog('识别错误: ' + e.message);
-        }
-
-        // 清理
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(track => track.stop());
-          streamRef.current = null;
+        } finally {
+          // 清理资源并重置状态
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
+          }
+          setTesting('none');
+          setIsListening(false);
+          isListeningRef.current = false;
+          addDebugLog('录音测试结束');
         }
       };
 

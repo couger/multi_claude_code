@@ -166,66 +166,84 @@
 
 ---
 
-*最后更新：2026-04-26*
+*最后更新：2026-04-29*
 
 ---
 
 ## 当前开发进度
 
-**已完成**: 语音识别（STT）功能实现
-
-**遇到问题**: Whisper C++ 后端实现
-- 问题：浏览器 MediaRecorder 输出 WebM/Opus 格式，Whisper C++ 只支持 WAV/FLAC/MP3/OGG
-- 错误信息：`failed to read audio data as wav (Unknown error)`
-- 已尝试方案：修改文件扩展名、路径修复等，问题持续存在
-
-**推荐解决方案**: Whisper Web (WASM)
-- 浏览器直接运行，无需后端
-- 原生支持 WebM/Opus 音频格式
-- 可复用已下载的 ggml-base.bin 模型
-- 配置简单，无需路径/可执行文件配置
-- 推荐包：@timur00kh/whisper.wasm
-
-**下一步**: 实现 Whisper Web 方案
-1. 前端集成 Whisper WASM
-2. 不需要后端 VoiceManager 处理音频
-3. 设置面板可简化为"模型管理"
+**已完成**: 黑屏修复 + WASM 崩溃修复 + 语音助手面板完善 + 连续对话模式 + STT 测试 WASM 优先
 
 ---
 
 ## 未完成任务
 
 ### 1. 黑屏问题排查与修复 ⭐⭐⭐
-- **状态**：进行中
-- **问题描述**：
-  - 实现语音助手面板功能后，应用启动时出现黑屏
-  - 可能是 VoiceAssistantPanel 组件初始化问题
-  - 可能的根因：
-    - `aiEnabled === false` 早期返回在配置获取失败时导致问题
-    - MediaRecorder 录音逻辑运行时错误
-    - useSyncExternalStore 返回新对象导致无限重渲染
-- **已采取的修复**：
-  - 缓存 useSyncExternalStore 的 snapshot
-  - WASM 包改为动态 import
-- **待排查**：
-  - 检查 VoiceAssistantPanel 组件的防御性代码
-  - 添加错误边界
-  - 确认配置获取失败时的降级处理
+- **状态**：✅ 已完成（2026-04-29）
+- **修复内容**：
+  - 新增 ErrorBoundary 组件包裹 App 和 VoiceAssistantPanel，防止单个组件崩溃导致全屏黑屏
+  - Whisper WASM 自动加载添加 try-catch 保护，加载失败时清除已保存模型 ID
+  - VoiceAssistantPanel 配置加载已有完善的 try-catch 降级处理
+  - useSyncExternalStore snapshot 缓存（之前已完成）
+  - WASM 包动态 import（之前已完成）
 
-### 2. 语音助手面板功能完善
-- **状态**：部分完成
-- **已完成**：
-  - VoiceAssistantPanel 组件创建
-  - TTS/STT 控制开关
-  - 与 AI 模型的集成 (ai_query)
-  - 对话展示（AI发言靠左，用户发言靠右）
-- **待完成**：
-  - STT 内容发送到后端后，窗口焦点放在发送按钮
-  - 会话事件的 TTS 功能（已放入计划）
+### 2. 解决 WASM 识别导致崩溃问题 ⭐⭐⭐
+- **状态**：✅ 已完成（2026-04-29）
+- **修复内容**：
+  - 音频大小限制：最大 10MB（截断）、最小 1000 字节（跳过）
+  - convertFromArrayBuffer 添加 15 秒超时保护
+  - whisper.transcribe 添加 30 秒超时保护
+  - 线程数限制为 max 2，减少 WASM 并发压力
+  - 转录结果空值校验
+  - 超时/崩溃后自动 unloadModel 重置状态
 
-### 3. Whisper WASM 前端集成
-- **状态**：已完成
+### 3. 语音助手面板功能完善
+- **状态**：✅ 已完成（2026-04-29）
+- **修复内容**：
+  - STT/文字输入发送后自动聚焦输入框
+  - 会话事件（创建/关闭/控制/查询）支持 TTS 播报
+  - ttsEnabledRef 确保 IPC 回调获取最新 TTS 设置
+  - STT 识别错误处理：区分 ERROR: 前缀错误并友好提示
+  - 识别失败时显示 ⚠️ 警告消息
+
+### 4. Whisper WASM 前端集成
+- **状态**：✅ 已完成（2026-04-29）
 - **功能**：
   - 浏览器端集成 @timur00kh/whisper.wasm
   - 支持 WebM/Opus 音频格式识别
-- **问题**：可能导致黑屏，需要进一步测试
+  - 已添加超时保护、大小限制、崩溃恢复机制
+
+### 5. WASM 崩溃根因分析与修复 ⭐⭐⭐
+- **状态**：✅ 已完成（2026-04-29）
+- **根因**：`@timur00kh/whisper.wasm` 的 `convertFromArrayBuffer` 对 webm/opus 音频解码不稳定，WASM 内存越界导致渲染进程直接崩溃（非 JS 异常，ErrorBoundary 无法拦截）
+- **修复方案**：绕过 `convertFromArrayBuffer`，用浏览器原生 `AudioContext.decodeAudioData()` 解码 webm/opus → 重采样到 16kHz → 直传 Float32Array 给 `whisper.transcribe`
+- **崩溃防护**：
+  - 主进程 `render-process-gone` 自动重载页面（最多 2 次），`did-finish-load` 后重置计数
+  - WhisperService 新增 `crashed` 状态，崩溃后拒绝再次调用 WASM，重新加载模型后重置
+  - SettingsPanel 环境检查显示 WASM 崩溃警告
+  - 单线程模式（threads: 1）降低并发风险
+
+### 6. 连续对话模式
+- **状态**：✅ 已完成（2026-04-29）
+- **功能**：
+  - VoiceAssistantPanel 新增"连续对话"开关
+  - 本地 Web Speech API TTS（`speakLocal`），可检测 `onend` 事件
+  - TTS 结束后自动开始聆听 → 识别 → AI 回复 → TTS → 循环
+  - 状态栏显示当前状态（聆听中/思考中/播报中/等待开始）
+  - 开始/结束对话控制按钮
+  - 麦克风权限失败自动停止并提示
+
+### 7. STT 测试前端 WASM 优先
+- **状态**：✅ 已完成（2026-04-29）
+- **功能**：
+  - SettingsPanel VoiceTab 新增 `useWhisperService` hook
+  - 根据 `whisperUseWasm` 配置和 WASM 模型加载状态自动选择引擎
+  - WASM 已加载 → 前端识别；未加载 → 提示并回退后端；原生模式 → 后端识别
+  - WASM 识别失败时自动回退到后端
+
+### 8. 错误边界（ErrorBoundary）
+- **状态**：✅ 已完成（2026-04-29）
+- **功能**：
+  - 捕获 React 渲染错误，显示恢复界面
+  - App 根组件包裹，防止单组件崩溃导致全屏黑屏
+  - VoiceAssistantPanel 单独包裹（Sidebar 中），fallback 为 null

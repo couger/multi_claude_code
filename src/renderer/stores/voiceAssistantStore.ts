@@ -13,6 +13,8 @@ interface VoiceAssistantState {
   isPlaying: boolean;
   isThinking: boolean;
   isCollapsed: boolean;
+  conversationMode: boolean;
+  conversationActive: boolean;
 }
 
 interface VoiceAssistantActions {
@@ -23,6 +25,8 @@ interface VoiceAssistantActions {
   setThinking: (v: boolean) => void;
   setCollapsed: (v: boolean) => void;
   toggleCollapsed: () => void;
+  setConversationMode: (v: boolean) => void;
+  setConversationActive: (v: boolean) => void;
   loadFromStorage: () => void;
 }
 
@@ -35,6 +39,8 @@ const initialState: VoiceAssistantState = {
   isPlaying: false,
   isThinking: false,
   isCollapsed: false,
+  conversationMode: false,
+  conversationActive: false,
 };
 
 let lastMessageKey = '';
@@ -72,6 +78,8 @@ export const useVoiceAssistantStore = create<VoiceAssistantState & VoiceAssistan
   setThinking: (v) => set({ isThinking: v }),
   setCollapsed: (v) => set({ isCollapsed: v }),
   toggleCollapsed: () => set((s) => ({ isCollapsed: !s.isCollapsed })),
+  setConversationMode: (v) => set({ conversationMode: v, conversationActive: v ? (get().conversationActive) : false }),
+  setConversationActive: (v) => set({ conversationActive: v }),
 
   loadFromStorage: () => {
     try {

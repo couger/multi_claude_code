@@ -15,5 +15,7 @@ export function useWhisperService() {
     unloadModel: useCallback(() => whisperService.unloadModel(), []),
     getAvailableModels: useCallback(() => whisperService.getAvailableModels(), []),
     clearCache: useCallback(() => whisperService.clearCache(), []),
+    isModelCached: useCallback((id: string) => whisperService.isModelCached(id), []),
+    getCacheInfo: useCallback(() => whisperService.getCacheInfo(), []),
   };
 }
